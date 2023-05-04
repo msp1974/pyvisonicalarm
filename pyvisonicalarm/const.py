@@ -5,6 +5,7 @@ import enum
 
 TEXT_UNKNOWN = "Unknown"
 TEXT_OPEN = "Open"
+TEXT_OPENED = "OPENED"
 TEXT_CLOSED = "Closed"
 TEXT_STATUS_HOME = "HOME"
 TEXT_STATUS_AWAY = "AWAY"

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from .classes import BaseClass, title_case
-from .const import TEXT_CLOSED, TEXT_OPEN, TEXT_UNKNOWN
+from .const import TEXT_CLOSED, TEXT_OPEN, TEXT_OPENED, TEXT_UNKNOWN
 
 
 @dataclass
@@ -82,12 +82,11 @@ class ContactDevice(Device):
     @property
     def state(self) -> str:
         """Returns the current state of the contact."""
-        if not self.warnings:
-            return TEXT_CLOSED
-        for warning in self.warnings:
-            if warning["type"] == TEXT_OPEN:
-                return TEXT_OPEN
-
+        if self.warnings:
+            for warning in self.warnings:
+                if warning["type"] == TEXT_OPENED:
+                    return TEXT_OPEN
+        return TEXT_CLOSED
 
 @dataclass
 class MotionDevice(Device):
