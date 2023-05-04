@@ -1,4 +1,4 @@
-__VERSION__ = "0.1.0b1"
+__VERSION__ = "0.1.0b2"
 
 import enum
 
