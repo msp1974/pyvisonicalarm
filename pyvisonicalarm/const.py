@@ -1,8 +1,3 @@
-__VERSION__ = "0.1.0b2"
-
-import enum
-
-
 TEXT_UNKNOWN = "Unknown"
 TEXT_OPEN = "Open"
 TEXT_OPENED = "OPENED"
