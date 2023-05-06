@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from .classes import BaseClass, title_case
 from .const import TEXT_CLOSED, TEXT_OPEN, TEXT_OPENED, TEXT_UNKNOWN
 
@@ -95,10 +96,18 @@ class MotionDevice(Device):
     @property
     def brightness(self) -> int:
         return self._get_nested_key("traits.meteo_info.brightness.value")
+    
+    @property
+    def brightness_last_updated(self) -> datetime:
+        return self._get_nested_key("traits.meteo_info.brightness.date")
 
     @property
     def temperature(self) -> float:
         return self._get_nested_key("traits.meteo_info.temperature.value")
+    
+    @property
+    def temperature_last_updated(self) -> datetime:
+        return self._get_nested_key("traits.meteo_info.temperature.date")
 
 
 @dataclass
