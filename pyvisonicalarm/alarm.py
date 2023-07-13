@@ -67,6 +67,12 @@ class Setup(object):
     def disarm(self, partition=-1):
         """Send Disarm command to the alarm system."""
         return self.__api.disarm(partition)["process_token"]
+    
+    def get_alarms(self):
+        return self.__api.get_alarms()
+    
+    def get_alerts(self):
+        return self.__api.get_alerts()
 
     def get_cameras(self):
         """Fetch all the devices that are available."""
