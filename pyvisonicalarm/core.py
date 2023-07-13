@@ -18,7 +18,7 @@ class API(object):
     # Client configuration
     __app_type = "com.visonic.powermaxapp"
     __user_agent = "Dart/2.10 (dart:io)"
-    __rest_version = "9.0"
+    __rest_version = "10.0"
 
     # API tokens
     __user_token = None
