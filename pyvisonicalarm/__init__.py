@@ -1,1 +1,3 @@
-__VERSION__ = "0.1.0b4"
+"""Visonic Alarm API"""
+
+__VERSION__ = "0.1.0b5"

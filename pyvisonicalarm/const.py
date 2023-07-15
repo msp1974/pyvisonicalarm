@@ -1,3 +1,5 @@
+"""Visonic API constants"""
+
 TEXT_UNKNOWN = "Unknown"
 TEXT_OPEN = "Open"
 TEXT_OPENED = "OPENED"
@@ -8,12 +10,14 @@ TEXT_STATUS_DISARM = "DISARM"
 
 
 class RequestType:
+    """HTTP request type."""
     GET = "GET"
     POST = "POST"
 
 
 class VisonicURL:
-    BASE = "https://{}/rest_api"  #'https://[hostname]/rest_api/[rest_version]
+    """URL paths."""
+    BASE = "https://{}/rest_api"  # 'https://[hostname]/rest_api/[rest_version]
 
     ACCESS_GRANT = "access/grant"
     ACCESS_REVOKE = "access/revoke"

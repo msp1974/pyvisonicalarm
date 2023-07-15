@@ -1,3 +1,5 @@
+"""Device type definitions"""
+
 from .devices import (
     CameraDevice,
     ContactDevice,

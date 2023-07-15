@@ -1,15 +1,36 @@
+"""API for Visonic Alarm"""
+
 import json
 import requests
 
-from .const import (
-    TEXT_STATUS_AWAY,
-    TEXT_STATUS_DISARM,
-    TEXT_STATUS_HOME,
-    RequestType,
-    VisonicURL,
+from .const import TEXT_STATUS_AWAY, TEXT_STATUS_DISARM, TEXT_STATUS_HOME, RequestType, VisonicURL
+from .exceptions import (
+    AlreadyGrantedError,
+    AlreadyLinkedError,
+    AppIDRequiredError,
+    ConnectionTimeoutError,
+    EmailRequiredError,
+    InvalidUserCodeError,
+    LoginAttemptsLimitReachedError,
+    LoginTemporaryBlockedError,
+    NewPasswordStrengthError,
+    NotAllowedError,
+    NotFoundError,
+    PanelNotConnectedError,
+    PanelSerialIncorrectError,
+    PanelSerialRequiredError,
+    PasswordRequiredError,
+    ResetPasswordCodeIncorrectError,
+    SessionTokenError,
+    UnauthorizedError,
+    UndefinedBadRequestError,
+    UndefinedForbiddenError,
+    UserAuthRequiredError,
+    UserCodeIncorrectError,
+    UserCodeRequiredError,
+    WrongPanelSerialOrMasterUserCodeError,
+    WrongUsernameOrPasswordError,
 )
-
-from .exceptions import *
 
 
 class API(object):
@@ -79,10 +100,7 @@ class API(object):
                 if pair["value"] == "wrong_combination":
                     if pair["key"] == "email" or pair["key"] == "password":
                         raise WrongUsernameOrPasswordError()
-                    if (
-                        pair["key"] == "panel_serial"
-                        or pair["key"] == "master_user_code"
-                    ):
+                    if pair["key"] == "panel_serial" or pair["key"] == "master_user_code":
                         raise WrongPanelSerialOrMasterUserCodeError()
         elif api["error"] == 10021:  # WrongUserCode
             raise UserCodeIncorrectError()
@@ -159,49 +177,43 @@ class API(object):
         # if the response is not OK (HTML 200)
         try:
             if request_type == "GET":
-                response = self.__session.get(
-                    url, headers=headers, timeout=self.__timeout
-                )
+                response = self.__session.get(url, headers=headers, timeout=self.__timeout)
             elif request_type == "POST":
-                response = self.__session.post(
-                    url, headers=headers, data=data_json, timeout=self.__timeout
-                )
+                response = self.__session.post(url, headers=headers, data=data_json, timeout=self.__timeout)
             response.raise_for_status()
-        except requests.exceptions.ConnectTimeout:
+        except requests.exceptions.ConnectTimeout as exc:
             raise ConnectionTimeoutError(
                 f"Connection to '{self.__hostname}' timed out after {str(self.__timeout)} seconds."
-            )
-            return None
-        except requests.exceptions.HTTPError as e:
+            ) from exc
+        except requests.exceptions.HTTPError as exc:
             api = json.loads(response.content.decode("utf-8"))
-            if "400 Client Error: Bad Request" in str(e):
+            if "400 Client Error: Bad Request" in str(exc):
                 self.__raise_on_bad_request(response.content)
-            elif "401 Client Error: Unauthorized" in str(e):
+            elif "401 Client Error: Unauthorized" in str(exc):
                 self.__raise_on_unauthorized(response.content)
-            elif "403 Client Error: Forbidden" in str(e):
+            elif "403 Client Error: Forbidden" in str(exc):
                 self.__raise_on_forbidden(response.content)
-            elif "404 Client Error: Not Found" in str(e):
-                raise NotFoundError()
-            elif "420 Client Error:" in str(e):
-                # TODO: {'error': 10020, 'error_message': 'Login temporary blocked', 'error_reason_code': 'LoginTemporaryBlocked', 'extras': [{'key': 'timeout', 'value': 44}]} // 44 = seconds to unblocked
-                # print(api)
+            elif "404 Client Error: Not Found" in str(exc):
+                raise NotFoundError() from exc
+            elif "420 Client Error:" in str(exc):
+                # TODO: {'error': 10020, 'error_message': 'Login temporary blocked', 'error_reason_code':
+                # 'LoginTemporaryBlocked', 'extras': [{'key': 'timeout', 'value': 44}]} // 44 = seconds to unblocked
                 raise LoginTemporaryBlockedError(
-                    f"Login is temporary blocked due to too many failed login attempts ({api['extras'][0]['count']} seconds remaining)."
-                )
-            elif "440 Client Error: Session token not found" in str(e):
-                raise SessionTokenError()
-            elif "442 Client Error: Login attempts limit reached" in str(e):
-                raise LoginAttemptsLimitReachedError("Login attempts limit reached.")
-            elif "444 Client Error: Wrong user code" in str(e):
-                raise InvalidUserCodeError(
-                    "Authentication failed due to wrong user code."
-                )
+                    f"Login is temporary blocked due to too many failed login attempts "
+                    f"({api['extras'][0]['count']} seconds remaining)."
+                ) from exc
+            elif "440 Client Error: Session token not found" in str(exc):
+                raise SessionTokenError() from exc
+            elif "442 Client Error: Login attempts limit reached" in str(exc):
+                raise LoginAttemptsLimitReachedError("Login attempts limit reached.") from exc
+            elif "444 Client Error: Wrong user code" in str(exc):
+                raise InvalidUserCodeError("Authentication failed due to wrong user code.") from exc
             else:
                 print(api)
                 raise
 
         # Check HTTP response code
-        if response.status_code == requests.codes.ok:
+        if response.status_code == 200:
             return json.loads(response.content.decode("utf-8"))
         else:
             return None
@@ -273,17 +285,13 @@ class API(object):
         """Grant a user access to the alarm panel via the API."""
         user_data = {"user": user_id, "email": email}
         user_json = json.dumps(user_data, separators=(",", ":"))
-        return self.__send_request(
-            VisonicURL.ACCESS_GRANT, data_json=user_json, request_type=RequestType.POST
-        )
+        return self.__send_request(VisonicURL.ACCESS_GRANT, data_json=user_json, request_type=RequestType.POST)
 
     def access_revoke(self, user_id):
         """Revoke access to the alarm panel via the API for a user."""
         user_data = {"user": user_id}
         user_json = json.dumps(user_data, separators=(",", ":"))
-        return self.__send_request(
-            VisonicURL.ACCESS_REVOKE, data_json=user_json, request_type=RequestType.POST
-        )
+        return self.__send_request(VisonicURL.ACCESS_REVOKE, data_json=user_json, request_type=RequestType.POST)
 
     def activate_siren(self):
         """Activate the siren (sound the alarm)."""
@@ -374,9 +382,7 @@ class API(object):
         """Get the settings needed to wake up the alarm panel via SMS."""
         return self.__send_request(VisonicURL.WAKEUP_SMS)
 
-    def panel_add(
-        self, alias: str, panel_serial: str, access_proof: str, master_user_code: str
-    ):
+    def panel_add(self, alias: str, panel_serial: str, access_proof: str, master_user_code: str):
         """Add a new alarm panel to the user account. A master user code is required."""
         panel_data = {
             "alias": alias,
@@ -385,9 +391,7 @@ class API(object):
             "master_user_code": master_user_code,
         }
         panel_json = json.dumps(panel_data, separators=(",", ":"))
-        return self.__send_request(
-            VisonicURL.PANEL_ADD, data_json=panel_json, request_type=RequestType.POST
-        )
+        return self.__send_request(VisonicURL.PANEL_ADD, data_json=panel_json, request_type=RequestType.POST)
 
     def panel_login(self, panel_serial: str, user_code: str):
         """Try to login to the alarm panel and get a session token."""
@@ -418,9 +422,7 @@ class API(object):
             "alias": alias,
         }
         panel_json = json.dumps(panel_data, separators=(",", ":"))
-        return self.__send_request(
-            VisonicURL.PANEL_RENAME, data_json=panel_json, request_type=RequestType.POST
-        )
+        return self.__send_request(VisonicURL.PANEL_RENAME, data_json=panel_json, request_type=RequestType.POST)
 
     def panel_unlink(self, panel_serial: str, password: str, app_id: str):
         """Unlink an alarm panel from the user account."""
@@ -430,9 +432,7 @@ class API(object):
             "app_id": app_id,
         }
         panel_json = json.dumps(panel_data, separators=(",", ":"))
-        return self.__send_request(
-            VisonicURL.PANEL_UNLINK, data_json=panel_json, request_type=RequestType.POST
-        )
+        return self.__send_request(VisonicURL.PANEL_UNLINK, data_json=panel_json, request_type=RequestType.POST)
 
     def password_reset(self, email: str):
         """Request a password reset email. An email will be sent to the email address provided."""
@@ -478,45 +478,35 @@ class API(object):
             request_type=RequestType.POST,
         )
 
-    def set_name(self, object_class: str, id: int, name: str):
+    def set_name(self, object_class: str, device_id: int, name: str):
         """Set the name of any type of object in the alarm system."""
-        name_data = {"class": object_class, "id": id, "name": name}
+        name_data = {"class": object_class, "id": device_id, "name": name}
         name_json = json.dumps(name_data, separators=(",", ":"))
-        return self.__send_request(
-            VisonicURL.SET_NAME, data_json=name_json, request_type=RequestType.POST
-        )
+        return self.__send_request(VisonicURL.SET_NAME, data_json=name_json, request_type=RequestType.POST)
 
     def set_user_code(self, user_code: str, user_id: str):
         """Set the code of a user in the alarm system."""
         code_data = {"user_code": user_code, "user_id": user_id}
         code_json = json.dumps(code_data, separators=(",", ":"))
-        return self.__send_request(
-            VisonicURL.SET_USER_CODE, data_json=code_json, request_type=RequestType.POST
-        )
+        return self.__send_request(VisonicURL.SET_USER_CODE, data_json=code_json, request_type=RequestType.POST)
 
     def arm_home(self, partition: int):
         """Arm in Home mode."""
         arm_info = {"partition": partition, "state": TEXT_STATUS_HOME}
         arm_json = json.dumps(arm_info, separators=(",", ":"))
-        return self.__send_request(
-            VisonicURL.SET_STATE, data_json=arm_json, request_type=RequestType.POST
-        )
+        return self.__send_request(VisonicURL.SET_STATE, data_json=arm_json, request_type=RequestType.POST)
 
     def arm_away(self, partition: id):
         """Arm in Away mode."""
         arm_info = {"partition": partition, "state": TEXT_STATUS_AWAY}
         arm_json = json.dumps(arm_info, separators=(",", ":"))
-        return self.__send_request(
-            VisonicURL.SET_STATE, data_json=arm_json, request_type=RequestType.POST
-        )
+        return self.__send_request(VisonicURL.SET_STATE, data_json=arm_json, request_type=RequestType.POST)
 
     def disarm(self, partition: id):
         """Disarm the alarm system."""
         disarm_info = {"partition": partition, "state": TEXT_STATUS_DISARM}
         disarm_json = json.dumps(disarm_info, separators=(",", ":"))
-        return self.__send_request(
-            VisonicURL.SET_STATE, data_json=disarm_json, request_type=RequestType.POST
-        )
+        return self.__send_request(VisonicURL.SET_STATE, data_json=disarm_json, request_type=RequestType.POST)
 
     def send_get(self, url):
         """Send a custom POST request."""
@@ -525,6 +515,4 @@ class API(object):
     def send_post(self, url, data):
         """Send a custom POST request."""
         data_json = json.dumps(data, separators=(",", ":"))
-        return self.__send_request(
-            url, data_json=data_json, request_type=RequestType.POST
-        )
+        return self.__send_request(url, data_json=data_json, request_type=RequestType.POST)

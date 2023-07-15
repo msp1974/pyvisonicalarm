@@ -1,3 +1,5 @@
+"""Control and access to alrm info"""
+
 from .classes import (
     Camera,
     Event,
@@ -23,7 +25,7 @@ class Setup(object):
     def __init__(self, hostname, app_id, api_version="latest"):
         """Initiate the connection to the REST API."""
         self.__api = API(hostname, app_id)
-        # self.set_rest_version(api_version)
+        self.set_rest_version(api_version)
 
     # System properties
     @property
@@ -67,11 +69,13 @@ class Setup(object):
     def disarm(self, partition=-1):
         """Send Disarm command to the alarm system."""
         return self.__api.disarm(partition)["process_token"]
-    
+
     def get_alarms(self):
+        """Return alarms."""
         return self.__api.get_alarms()
-    
+
     def get_alerts(self):
+        """Return alerts."""
         return self.__api.get_alerts()
 
     def get_cameras(self):
@@ -85,10 +89,10 @@ class Setup(object):
         devices = self.__api.get_devices()
 
         for device in devices:
-            if DeviceClass := DEVICE_SUBTYPES.get(device["subtype"]):
-                device_list.append(DeviceClass(device))
-            elif DeviceClass := DEVICE_TYPES.get(device["device_type"]):
-                device_list.append(DeviceClass(device))
+            if device_class := DEVICE_SUBTYPES.get(device["subtype"]):
+                device_list.append(device_class(device))
+            elif device_class := DEVICE_TYPES.get(device["device_type"]):
+                device_list.append(device_class(device))
             else:
                 device_list.append(GenericDevice(device))
 
