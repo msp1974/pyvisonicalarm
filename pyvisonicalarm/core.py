@@ -3,7 +3,14 @@
 import json
 import requests
 
-from .const import TEXT_STATUS_AWAY, TEXT_STATUS_DISARM, TEXT_STATUS_HOME, RequestType, VisonicURL
+from .const import (
+    DEFAULT_REST_VERSION,
+    TEXT_STATUS_AWAY,
+    TEXT_STATUS_DISARM,
+    TEXT_STATUS_HOME,
+    RequestType,
+    VisonicURL,
+)
 from .exceptions import (
     AlreadyGrantedError,
     AlreadyLinkedError,
@@ -39,7 +46,7 @@ class API(object):
     # Client configuration
     __app_type = "com.visonic.powermaxapp"
     __user_agent = "Dart/2.10 (dart:io)"
-    __rest_version = "10.0"
+    __rest_version = DEFAULT_REST_VERSION
 
     # API tokens
     __user_token = None
@@ -242,7 +249,7 @@ class API(object):
         """Property to keep track of the user id (UUID) beeing used."""
         return self.__app_id
 
-    def get_version_info(self):
+    def get_version_info(self) -> dict:
         """Find out which REST API versions are supported."""
         return self.__send_request(
             VisonicURL.VERSION,

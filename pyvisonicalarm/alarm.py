@@ -1,5 +1,6 @@
 """Control and access to alrm info"""
 
+from pyvisonicalarm.const import DEFAULT_REST_VERSION
 from .classes import (
     Camera,
     Event,
@@ -25,7 +26,7 @@ class Setup(object):
     def __init__(self, hostname, app_id, api_version="latest"):
         """Initiate the connection to the REST API."""
         self.__api = API(hostname, app_id)
-        self.set_rest_version(api_version)
+        # self.set_rest_version(api_version)
 
     # System properties
     @property
@@ -130,7 +131,11 @@ class Setup(object):
 
     def get_rest_versions(self):
         """Fetch the supported API versions."""
-        return self.api.get_version_info()["rest_versions"]
+        vinfo = self.api.get_version_info()
+        try:
+            return vinfo.get("rest_versions", [])[0]
+        except KeyError:
+            return DEFAULT_REST_VERSION
 
     def get_status(self):
         """Fetch the current state of the alarm system."""
@@ -175,9 +180,7 @@ class Setup(object):
 
     def password_reset_complete(self, reset_password_code, new_password):
         """Complete the password reset by entering the reset code received in the email and a new password."""
-        return self.__api.password_reset_complete(reset_password_code, new_password)[
-            "user_token"
-        ]
+        return self.__api.password_reset_complete(reset_password_code, new_password)["user_token"]
 
     def set_bypass_zone(self, zone, set_enabled):
         """Enabled or disable zone bypassing (for example, bypass a sensor to disable it)."""
@@ -200,9 +203,7 @@ class Setup(object):
         elif version in rest_versions:
             self.__api.set_rest_version(version)
         else:
-            raise UnsupportedRestAPIVersionError(
-                f"Rest API version {version} is not supported by server."
-            )
+            raise UnsupportedRestAPIVersionError(f"Rest API version {version} is not supported by server.")
 
     def set_user_code(self, user_id, user_code):
         """Set the code of a user by user ID."""
