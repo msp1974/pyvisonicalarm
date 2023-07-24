@@ -163,6 +163,11 @@ class KeyFobDevice(Device):
 
 
 @dataclass
+class TagDevice(Device):
+    """Tag device class definition"""
+
+
+@dataclass
 class PGMDevice(Device):
     """PGM device class definition."""
 
