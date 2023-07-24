@@ -1,7 +1,7 @@
 """Control and access to alrm info"""
 
-from pyvisonicalarm.const import DEFAULT_REST_VERSION
 from .classes import (
+    Alarm,
     Camera,
     Event,
     FeatureSet,
@@ -73,7 +73,8 @@ class Setup(object):
 
     def get_alarms(self):
         """Return alarms."""
-        return self.__api.get_alarms()
+        alarms = self.__api.get_alarms()
+        return [Alarm(alarm) for alarm in alarms]
 
     def get_alerts(self):
         """Return alerts."""
@@ -131,15 +132,10 @@ class Setup(object):
 
     def get_rest_versions(self):
         """Fetch the supported API versions."""
-        vinfo = self.api.get_version_info()
-        try:
-            return vinfo.get("rest_versions", [])[0]
-        except KeyError:
-            return DEFAULT_REST_VERSION
+        return self.api.get_version_info()["rest_versions"]
 
     def get_status(self):
         """Fetch the current state of the alarm system."""
-
         status = self.__api.get_status()
         return Status(status)
 
