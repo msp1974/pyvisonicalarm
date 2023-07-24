@@ -360,6 +360,12 @@ class API(object):
         """Get a list of panels."""
         return self.__send_request(VisonicURL.PANELS)
 
+    def get_preview_image(self, image_path: str):
+        """Get preview image for camera"""
+        if image_path:
+            return self.__send_request(image_path.replace("/rest_api", ""))
+        return None
+
     def get_process_status(self, process_token):
         """Get the current status of a process running on API server."""
         return self.__send_request(VisonicURL.PROCESS_STATUS.format(process_token))
