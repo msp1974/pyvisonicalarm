@@ -385,6 +385,11 @@ class PanelInfo(BaseClass):
         return self._data.get("serial")
 
     @property
+    def multi_partitions(self) -> bool:
+        """Multi partitions enabled"""
+        return True if len(self._data.get("partitions")) > 1 else False
+
+    @property
     def partitions(self) -> list[PanelInfoPartition]:
         """Partitions info"""
         return list([PanelInfoPartition(partition) for partition in self._data.get("partitions")])
