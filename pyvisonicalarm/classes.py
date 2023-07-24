@@ -10,6 +10,7 @@ from .const import TEXT_UNKNOWN
 # Decorator function to set string output to title case
 def title_case(func):
     """Format to title case"""
+
     def wrapper(*args, **kwargs):
         if result := func(*args, **kwargs):
             return str(result).title()
@@ -41,11 +42,7 @@ class BaseClass:
         return f"{str(type(self))}: {res}"
 
     def _is_property(self, attr) -> bool:
-        if not (
-            attr[0].startswith("__")
-            and attr[0].endswith("__")
-            or attr[0].startswith("_")
-        ):
+        if not (attr[0].startswith("__") and attr[0].endswith("__") or attr[0].startswith("_")):
             return True
         return False
 
@@ -380,9 +377,7 @@ class PanelInfo(BaseClass):
     @property
     def remote_admin_requires_user_acceptance(self) -> bool:
         """Programming requires user acceptance"""
-        return self._data.get(
-            "remote_switch_to_programming_mode_requires_user_acceptance"
-        )
+        return self._data.get("remote_switch_to_programming_mode_requires_user_acceptance")
 
     @property
     def serial(self) -> str:
@@ -392,12 +387,7 @@ class PanelInfo(BaseClass):
     @property
     def partitions(self) -> list[PanelInfoPartition]:
         """Partitions info"""
-        return list(
-            [
-                PanelInfoPartition(partition)
-                for partition in self._data.get("partitions")
-            ]
-        )
+        return list([PanelInfoPartition(partition) for partition in self._data.get("partitions")])
 
     @property
     def features(self) -> PanelInfoFeatures:
@@ -542,6 +532,63 @@ class Status(BaseClass):
     def rssi_network(self) -> str:
         """Get RSSI signal network."""
         return self._get_nested_key("rssi.network")
+
+
+@dataclass
+class Alarm(BaseClass):
+    """Class definition of Alarm"""
+
+    @property
+    def device_type(self) -> str:
+        """Device type."""
+        return self._data.get("device_type")
+
+    @property
+    def alarm_type(self) -> str:
+        """Alarm type."""
+        return self._data.get("alarm_type")
+
+    @property
+    def date_time(self) -> str:
+        """Date time of alarm"""
+        return self._data.get("datetime")
+
+    @property
+    def has_video(self) -> bool:
+        """Has video."""
+        return self._data.get("has_video")
+
+    @property
+    def event_id(self) -> int:
+        """Event id."""
+        return self._data.get("evt_id")
+
+    @property
+    @title_case
+    def location(self) -> str:
+        """Location."""
+        return self._data.get("location")
+
+    @property
+    def partitions(self) -> list[int]:
+        """Partitions."""
+        return self._data.get("partitions")
+
+    @property
+    def zone(self) -> int:
+        """Zone ID."""
+        return self._data.get("zone")
+
+    @property
+    @title_case
+    def zone_name(self) -> str:
+        """Zone type."""
+        return self._data.get("zone_name")
+
+    @property
+    def zone_type(self) -> str:
+        """Zone type."""
+        return self._data.get("zone_type")
 
 
 @dataclass
