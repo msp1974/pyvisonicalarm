@@ -21,6 +21,7 @@ DEVICE_TYPES = {
 DEVICE_SUBTYPES = {
     "CONTACT": ContactDevice,
     "CONTACT_AUX": ContactDevice,
+    "CONTACT_V": ContactDevice,
     "MC303_VANISH": ContactDevice,
     "MOTION_CAMERA": CameraDevice,
     "SMOKE": SmokeDevice,
