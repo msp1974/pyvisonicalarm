@@ -1,12 +1,13 @@
-""" define Python user-defined exceptions """
+"""Define Python user-defined exceptions."""
 
 
 class Error(Exception):
-    """Base class for other exceptions"""
+    """Base class for other exceptions."""
 
     message = ""
 
     def __init__(self, error: str = ""):
+        """Initialise."""
         if error:
             self.message = f"{self.message} - {error}"
         super().__init__(self.message)
@@ -99,6 +100,12 @@ class UnauthorizedError(Error):
     message = "Unauthorized to access API endpoint."
 
 
+class InternalServerError(Error):
+    """Raised when a 500 Internal Server Error occurs."""
+
+    message = "Internal Server Error to access API endpoint."
+
+
 class UndefinedForbiddenError(Error):
     """Raised when an undefined 403 Client Error occurs."""
 
@@ -188,8 +195,14 @@ class SessionTokenError(Error):
 
     message = "Session token not found. Please log in prior to this call."
 
+class VisonicRateLimitError(Error):
+    """Raised when Login limit reached or temporary block."""
+
+    message = "Login limit reached or temporary block."
+
 
 class UnsupportedRestAPIVersionError(Error):
     """Raised when a version of the REST API is unsupported."""
 
     message = "Unsupported REST API version."
+

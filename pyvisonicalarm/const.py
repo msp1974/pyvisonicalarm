@@ -1,22 +1,47 @@
-"""Visonic API constants"""
+"""Visonic API constants."""
 
-DEFAULT_REST_VERSION = "9.0"
+from enum import IntEnum, StrEnum
+
+DEFAULT_REST_VERSION = "9.0" # "14.0"
+DEFAULT_INSTALLER_VERSION = "8.0" # "12.0"
 
 TEXT_UNKNOWN = "Unknown"
-TEXT_OPEN = "Open"
+#TEXT_OPEN = "Open"
 TEXT_OPENED = "OPENED"
-TEXT_CLOSED = "Closed"
+#TEXT_CLOSED = "Closed"
 TEXT_STATUS_HOME = "HOME"
 TEXT_STATUS_AWAY = "AWAY"
+TEXT_STATUS_HOME_INSTANT = "HOME_INSTANT"
+TEXT_STATUS_AWAY_INSTANT = "AWAY_INSTANT"
 TEXT_STATUS_DISARM = "DISARM"
 
-
-class RequestType:
+class RequestType(StrEnum):
     """HTTP request type."""
-
     GET = "GET"
     POST = "POST"
 
+# List of sensor types
+class SensorGroup(IntEnum):
+    """Enumeration of sensor types."""
+    IGNORED = 1
+    UNKNOWN = 2
+    MOTION = 3
+    MAGNET = 4
+    CAMERA = 5
+    WIRED = 6
+    SMOKE = 7
+    FLOOD = 8
+    GAS = 9
+    VIB = 10
+    SHOCK = 11
+    TEMP = 12
+    SOUND = 13
+    GLASS = 14
+    PANEL = 100
+    COMMS = 101
+    TOKEN = 102
+    SIREN = 103
+    SWITCH = 200
 
 class VisonicURL:
     """URL paths."""
@@ -40,6 +65,7 @@ class VisonicURL:
     MAKE_VIDEO = "make_video"
     NOTIFICATIONS_EMAIL = "notifications/email"
     PANEL_LOGIN = "panel/login"
+    PANEL_ACCESS_INFO = "panel_access_info"
     PANEL_ADD = "panel/add"
     PANEL_INFO = "panel_info"
     PANEL_RENAME = "panel/rename"

@@ -1,10 +1,11 @@
-"""Device type classes"""
+"""Device type classes."""
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from .classes import BaseClass, title_case
-from .const import TEXT_CLOSED, TEXT_OPEN, TEXT_OPENED, TEXT_UNKNOWN
+from .const import TEXT_OPENED, TEXT_UNKNOWN, SensorGroup
 
 
 @dataclass
@@ -17,17 +18,22 @@ class Device(BaseClass):
         return self._get_nested_key("traits.bypass.enabled", None)
 
     @property
+    def sensor_group(self) -> SensorGroup | None:
+        """Get sensor_group."""
+        return self._data.get("sensor_group", "")
+
+    @property
     def device_number(self) -> int:
         """Get device number."""
         return self._data.get("device_number", 0)
 
     @property
-    def device_type(self) -> str:
+    def device_type(self) -> str|None:
         """Get device type."""
         return self._data.get("device_type")
 
     @property
-    def enrollment_id(self) -> str:
+    def enrollment_id(self) -> str|None:
         """Get enrollment id."""
         return self._data.get("enrollment_id")
 
@@ -48,7 +54,7 @@ class Device(BaseClass):
         return self._data.get("name", TEXT_UNKNOWN)
 
     @property
-    def partitions(self) -> list:
+    def partitions(self) -> list[str]:
         """Get device partitions."""
         return self._data.get("partitions", [])
 
@@ -78,33 +84,58 @@ class Device(BaseClass):
         return self._data.get("subtype", TEXT_UNKNOWN)
 
     @property
-    def warnings(self) -> list:
+    def warnings(self) -> dict[str, Any]:
         """Get device warnings."""
-        return self._data.get("warnings", [])
+        return self._data.get("warnings", {})
 
     @property
     def zone_type(self) -> str:
         """Get device zone type."""
         return self._data.get("zone_type", TEXT_UNKNOWN)
 
+    @property
+    def low_battery(self) -> str:
+        """Get device zone type."""
+        return self._data.get("low_battery", TEXT_UNKNOWN)
+
+    @property
+    def trouble(self) -> str:
+        """Get device zone type."""
+        return self._data.get("trouble", "TEXT_UNKNOWN")
+
+    @property
+    def tamper(self) -> str:
+        """Get device zone type."""
+        return self._data.get("tamper", TEXT_UNKNOWN)
+
+    @property
+    def state(self) -> bool:
+        """Returns the current state of the contact."""
+        return self._data.get("state", TEXT_UNKNOWN)
+
+
+@dataclass
+class PanelDevice(Device):
+    """Alarm Panel Device."""
+
 
 @dataclass
 class CameraDevice(Device):
     """Camera device class definition."""
+
+    @property
+    def vod(self) -> str:
+        """Returns the current vod."""
+        return self._get_nested_key("traits.vod", None)
 
 
 @dataclass
 class ContactDevice(Device):
     """Contact device class definition."""
 
-    @property
-    def state(self) -> str:
-        """Returns the current state of the contact."""
-        if self.warnings:
-            for warning in self.warnings:
-                if warning["type"] == TEXT_OPENED:
-                    return TEXT_OPEN
-        return TEXT_CLOSED
+@dataclass
+class ShockDevice(Device):
+    """Contact device class definition."""
 
 
 @dataclass
@@ -134,7 +165,7 @@ class MotionDevice(Device):
 
 @dataclass
 class GenericDevice(Device):
-    """Smoke device class definition."""
+    """Generic device class definition."""
 
 
 @dataclass
@@ -161,10 +192,17 @@ class KeyFobDevice(Device):
         """Get owner name."""
         return self._get_nested_key("traits.owner.name", TEXT_UNKNOWN)
 
+    @property
+    def state(self) -> bool:
+        """Returns the current state of the keyfob."""
+        if self.warnings:
+            return TEXT_OPENED in str(self.warnings)
+        return False
+
 
 @dataclass
 class TagDevice(Device):
-    """Tag device class definition"""
+    """Tag device class definition."""
 
 
 @dataclass
