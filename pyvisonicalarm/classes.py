@@ -10,14 +10,17 @@ from .const import TEXT_UNKNOWN
 
 
 # Decorator function to set string output to title case
-def title_case(func: Any) -> Callable[..., str]:
-    """Format to title case."""
+def title_case(
+    func: Callable[..., str | None],
+) -> Callable[..., str | None]:
+    """Format string output to title case."""
 
-    def wrapper(*args: Any, **kwargs: Any):
-        if result := func(*args, **kwargs):
-            return str(result).title()
-        return result
-
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> str | None:
+        result = func(*args, **kwargs)
+        if result is None:
+            return None
+        return result.title()
     return wrapper
 
 
@@ -50,14 +53,61 @@ class BaseClass:
             return True
         return False
 
-    def _get_nested_key(self, path: str, *default: Any) -> Any:
+    def _get_key(self, key: str, default: Any | None) -> Any | None:
+        """Get key value in data or return default."""
+        return self._data.get(key, default)
+
+    def _get_key_bool(self, key: str, default: bool) -> bool:
+        """Get key bool value or return default."""
+        try:
+            return bool(self._get_key(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    def _get_key_int(self, key: str, default: int = 0) -> int:
+        """Get key int value or return default."""
+        try:
+            val: Any = self._get_key(key, default)
+            return int(val)
+        except (TypeError, ValueError):
+            return default
+
+    def _get_key_str(self, key: str, default: str = "") -> str:
+        """Get key int value or return default."""
+        try:
+            return str(self._get_key(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    def _get_nested_key(self, path: str, default: Any | None = None) -> Any:
         """Get key value in json by dotted notation or return default."""
         try:
             return functools.reduce(lambda x, y: x[y], path.split("."), self._data)
-        except KeyError:
-            if default:
-                return default[0]
-            return None
+        except (TypeError, ValueError, KeyError):
+            return default
+
+    def _get_nested_key_bool(self, path: str, default: bool | None) -> bool | None:
+        """Get key value in json by dotted notation or return default."""
+        try:
+            return bool(functools.reduce(lambda x, y: x[y], path.split("."), self._data))
+        except (TypeError, ValueError, KeyError):
+            return default
+
+    def _get_nested_key_int(self, path: str, default: int) -> int:
+        """Get key value in json by dotted notation or return default."""
+        try:
+            val: Any = functools.reduce(lambda x, y: x[y], path.split("."), self._data)
+            return int(val)
+        except (TypeError, ValueError, KeyError):
+            return default
+
+    def _get_nested_key_str(self, path: str, default: str) -> str:
+        """Get key value in json by dotted notation or return default."""
+        try:
+            val: Any = functools.reduce(lambda x, y: x[y], path.split("."), self._data)
+            return str(val)
+        except (TypeError, ValueError, KeyError):
+            return default
 
 
 @dataclass
@@ -73,12 +123,14 @@ class Camera(BaseClass):
     @property
     def partitions(self) -> list[int]:
         """Return camera partitions."""
-        return self._data.get("partitions", [])
+        val: list[int] = self._data.get("partitions", [])
+        return val
 
     @property
     def preenroll(self) -> bool:
         """Pre-enroll camera."""
-        return self._data.get("preenroll", False)
+        val: bool = self._data.get("preenroll", False)
+        return val
 
     @property
     def preview_path(self) -> str | None:
@@ -116,12 +168,14 @@ class Event(BaseClass):
     @property
     def id(self) -> int:  # pylint: disable=invalid-name
         """Event ID."""
-        return self._data.get("event", 0)
+        val: int = self._data.get("event", 0)
+        return val
 
     @property
     def type_id(self) -> int:
         """Event type ID."""
-        return self._data.get("type_id", 0)
+        val: int = self._data.get("type_id", 0)
+        return val
 
     @property
     @title_case
@@ -149,7 +203,8 @@ class Event(BaseClass):
     @property
     def video(self) -> bool:
         """Event has video."""
-        return self._data.get("video", False)
+        val: bool = self._data.get("video", False)
+        return val
 
     @property
     @title_case
@@ -163,9 +218,9 @@ class Event(BaseClass):
         return self._data.get("zone")
 
     @property
-    def partitions(self) -> list[int] | None:
+    def partitions(self) -> set[int] | None:
         """Event partitions."""
-        return self._data.get("partitions")
+        return set(self._data.get("partitions", {}))
 
     @property
     def name(self) -> str | None:
@@ -179,77 +234,77 @@ class FeatureSet(BaseClass):
 
     # Event properties
     @property
-    def events_enabled(self):
+    def events_enabled(self) -> Any:
         """Get if events enabled."""
         return self._get_nested_key("events.is_enabled")
 
     @property
-    def datetime_enabled(self):
+    def datetime_enabled(self) -> Any:
         """Get if datetime enabled."""
         return self._get_nested_key("datetime.is_enabled")
 
     @property
-    def partitions_enabled(self):
+    def partitions_enabled(self) -> Any:
         """Getof partitions enabled."""
         return self._get_nested_key("partitions.is_enabled")
 
     @property
-    def partitions_has_labels(self):
+    def partitions_has_labels(self) -> Any:
         """Get if partitions labels enabled."""
         return self._get_nested_key("partitions.is_labels_enabled")
 
     @property
-    def partitions_max_count(self):
+    def partitions_max_count(self) -> Any:
         """Get max supported partitions."""
         return self._get_nested_key("partitions.max_partitions")
 
     @property
-    def devices_enabled(self):
+    def devices_enabled(self) -> Any:
         """Get if devices enabled."""
         return self._get_nested_key("devices.is_enabled")
 
     @property
-    def sirens_can_enable(self):
+    def sirens_can_enable(self) -> Any:
         """Get if can enable sirens."""
         return self._get_nested_key("sirens.can_enable")
 
     @property
-    def sirens_can_disable(self):
+    def sirens_can_disable(self) -> Any:
         """Get if can disable sirens."""
         return self._get_nested_key("sirens.can_disable")
 
     @property
-    def home_automation_devices_enabled(self):
+    def home_automation_devices_enabled(self) -> Any:
         """Get if home automation devices enabled."""
         return self._get_nested_key("home_automation_devices.is_enabled")
 
     @property
-    def state_enabled(self):
+    def state_enabled(self) -> Any:
         """Get if state enabled."""
         return self._get_nested_key("state.is_enabled")
 
     @property
-    def state_can_set(self):
+    def state_can_set(self) -> Any:
         """Get if state can be set."""
         return self._get_nested_key("state.can_set")
 
     @property
-    def state_can_get(self):
+    def state_can_get(self) -> Any:
         """Get if state can be read."""
         return self._get_nested_key("state.can_get")
 
     @property
-    def faults_enabled(self):
+    def faults_enabled(self) -> Any:
         """Get if faults enabled."""
         return self._get_nested_key("faults.is_enabled")
 
     @property
-    def diagnostic_enabled(self):
+    def diagnostic_enabled(self) -> Any:
         """Get if diagnostic enabled."""
         return self._get_nested_key("diagnostic.is_enabled")
 
     @property
-    def wifi_enabled(self):
+    def wifi_enabled(self) -> Any:
         """Get if wifi enabled."""
         return self._get_nested_key("wifi.is_enabled")
 
@@ -259,18 +314,18 @@ class Location(BaseClass):
     """Class definition of a location in the alarm system."""
 
     @property
-    def id(self):  # pylint: disable=invalid-name
+    def id(self) -> Any:  # pylint: disable=invalid-name
         """Location ID."""
         return self._data.get("hel_id")
 
     @property
     @title_case
-    def name(self):
+    def name(self) -> Any:
         """Location name."""
         return self._data.get("name")
 
     @property
-    def is_editable(self):
+    def is_editable(self) -> Any:
         """Location is editable."""
         return self._data.get("is_editable")
 
@@ -285,9 +340,9 @@ class PanelInfoPartition(BaseClass):
         return self._data.get("id")
 
     @property
-    def active(self) -> bool | None:
+    def active(self) -> bool:
         """Get if partition active."""
-        return self._data.get("active")
+        return bool(self._data.get("active", False))
 
     @property
     def exit_delay_time(self) -> int | None:
@@ -433,7 +488,7 @@ class Partition(BaseClass):
         return self._data.get("id")
 
     @property
-    def state(self):
+    def state(self) -> Any:
         """Get partition state."""
         return self._data.get("state")
 
@@ -492,42 +547,50 @@ class Status(BaseClass):
     @property
     def bba_connected(self) -> bool:
         """Get if broadband connected."""
-        return self._get_nested_key("connected_status.bba.is_connected", False)
+        val: bool = self._get_nested_key("connected_status.bba.is_connected", False)
+        return val
 
     @property
     def bba_state(self) -> str:
         """Get broadband connection state."""
-        return self._get_nested_key("connected_status.bba.state", TEXT_UNKNOWN)
+        val: str = self._get_nested_key("connected_status.bba.state", TEXT_UNKNOWN)
+        return val
 
     @property
     def gprs_connected(self) -> bool:
         """Get if GPRS connected."""
-        return self._get_nested_key("connected_status.gprs.is_connected", False)
+        val: bool = self._get_nested_key("connected_status.gprs.is_connected", False)
+        return val
 
     @property
     def gprs_state(self) -> str:
         """Get GPRS state."""
-        return self._get_nested_key("connected_status.grps.state", TEXT_UNKNOWN)
+        val: str = self._get_nested_key("connected_status.grps.state", TEXT_UNKNOWN)
+        return val
 
     @property
     def discovery_completed(self) -> bool:
         """Get if discovery completed."""
-        return self._get_nested_key("discovery.completed")
+        val: bool = self._get_nested_key("discovery.completed", False)
+        return val
 
     @property
     def discovery_stages(self) -> int:
         """Get discovery stages."""
-        return self._get_nested_key("discovery.stages")
+        val: int = self._get_nested_key("discovery.stages", 0)
+        return val
 
     @property
     def discovery_in_queue(self) -> int:
         """Get if discovery in queue."""
-        return self._get_nested_key("discovery.in_queue")
+        val: int = self._get_nested_key("discovery.in_queue", 0)
+        return val
 
     @property
     def discovery_triggered(self) -> bool:
         """Get if discovery triggered."""
-        return self._get_nested_key("discovery.triggered")
+        val: bool = self._get_nested_key("discovery.triggered", False)
+        return val
 
     @property
     def partitions(self) -> list[Partition]:
@@ -537,12 +600,14 @@ class Status(BaseClass):
     @property
     def rssi_level(self) -> int:
         """Get RSSI signal level."""
-        return self._get_nested_key("rssi.level")
+        val: int = self._get_nested_key("rssi.level", 0)
+        return val
 
     @property
     def rssi_network(self) -> str:
         """Get RSSI signal network."""
-        return self._get_nested_key("rssi.network")
+        val: str = self._get_nested_key("rssi.network", "")
+        return val
 
 
 @dataclass

@@ -1,6 +1,7 @@
 """Visonic API constants."""
 
 from enum import IntEnum, StrEnum
+from typing import Any
 
 DEFAULT_REST_VERSION = "9.0" # "14.0"
 DEFAULT_INSTALLER_VERSION = "8.0" # "12.0"
@@ -14,6 +15,8 @@ TEXT_STATUS_AWAY = "AWAY"
 TEXT_STATUS_HOME_INSTANT = "HOME_INSTANT"
 TEXT_STATUS_AWAY_INSTANT = "AWAY_INSTANT"
 TEXT_STATUS_DISARM = "DISARM"
+
+type JsonData = dict[str, Any] | list[Any]
 
 class RequestType(StrEnum):
     """HTTP request type."""
