@@ -1,13 +1,20 @@
-"""API for Visonic Alarm"""
+"""API for Visonic Alarm Core cloud connection."""
 
+import asyncio
 import json
-import requests
+import logging
+from typing import Any
+
+import aiohttp
+from aiohttp import ClientTimeout
 
 from .const import (
+    DEFAULT_INSTALLER_VERSION,
     DEFAULT_REST_VERSION,
     TEXT_STATUS_AWAY,
     TEXT_STATUS_DISARM,
     TEXT_STATUS_HOME,
+    JsonData,
     RequestType,
     VisonicURL,
 )
@@ -15,14 +22,17 @@ from .exceptions import (
     AlreadyGrantedError,
     AlreadyLinkedError,
     AppIDRequiredError,
+    BadRequestPanelIsArmedError,
     ConnectionTimeoutError,
     EmailRequiredError,
+    InternalServerError,
     InvalidUserCodeError,
     LoginAttemptsLimitReachedError,
     LoginTemporaryBlockedError,
     NewPasswordStrengthError,
     NotAllowedError,
     NotFoundError,
+    NotSupportedError,
     PanelNotConnectedError,
     PanelSerialIncorrectError,
     PanelSerialRequiredError,
@@ -32,6 +42,7 @@ from .exceptions import (
     UnauthorizedError,
     UndefinedBadRequestError,
     UndefinedForbiddenError,
+    UnsupportedRestAPIVersionError,
     UserAuthRequiredError,
     UserCodeIncorrectError,
     UserCodeRequiredError,
@@ -39,493 +50,586 @@ from .exceptions import (
     WrongUsernameOrPasswordError,
 )
 
+_LOGGER = logging.getLogger(__name__)
 
-class API(object):
-    """Class used for communication with the Visonic API"""
+APP_TYPE = "com.visonic.powermaxapp"
+USER_AGENT = "Dart/2.10 (dart:io)"
 
-    # Client configuration
-    __app_type = "com.visonic.powermaxapp"
-    __user_agent = "Dart/2.10 (dart:io)"
-    __rest_version = DEFAULT_REST_VERSION
+class API:
+    """Class used for communication with the Visonic API."""
 
-    # API tokens
-    __user_token = None
-    __session_token = None
+    def __init__(self, session: aiohttp.ClientSession, hostname: str, app_id: str, timeout: int = 8) -> None:
+        """Initialise the Async API class."""
+        self._timeout: int = timeout
+        self._session: aiohttp.ClientSession = session
+        self._hostname: str = hostname.rstrip("/")
+        self._app_id: str = app_id
+        self._user_token: str | None = None
+        self._session_token: str | None = None
+        self._rest_version: str = DEFAULT_REST_VERSION
+        self._installer_version: str = DEFAULT_INSTALLER_VERSION
 
-    # Use a session to reuse one TCP connection instead of creating a new
-    # connection for every call to the API
-    __session = None
-    __timeout = 4
+    async def close_session(self) -> None:
+        """Close the session."""
+        await self._session.close()
 
-    def __init__(self, hostname, app_id):
-        """Class constructor initializes all URL variables."""
+#    def _require_session(self):
+#        if not self._session_token:
+#            raise SessionTokenError
 
-        # Set connection specific details
-        self.__hostname = hostname
-        self.__app_id = app_id
+    def _decode_json(self, body_bytes: bytes) -> JsonData:
+        result = json.loads(body_bytes.decode("utf-8"))
+        if result is None:
+            return {}
+        if isinstance(result, (dict, list)):
+            return result
+        raise ValueError(f"Unexpected JSON type: {type(result).__name__}")
 
-        # Create a new session
-        self.__session = requests.session()
+    async def _send_request_url(self, url: str,
+                             data: dict[str, Any] | None = None,
+                             params: dict[str, Any] | None = None,
+                             request_type: RequestType = RequestType.GET,
+                             with_user: bool = True, with_session: bool = True
+    ) -> JsonData:
+        headers: dict[str, Any] = {
+            "Host": self._hostname,
+            "Connection": "keep-alive",
+            "User-Agent": USER_AGENT,
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip",
+        }
 
-    def set_rest_version(self, version):
-        """Set which version to use when connection to the API."""
-        self.__rest_version = version
+        if request_type == RequestType.POST and data is not None:
+            headers["Content-Type"] = "application/json"
+        if with_user and self._user_token:
+            headers["User-Token"] = self._user_token
+        if with_session and self._session_token:
+            headers["Session-Token"] = self._session_token
 
-    def __raise_on_bad_request(self, error):
+        try:
+            # Use a timeout context manager for the request
+            async with self._session.request(method=request_type, url=url, headers=headers, params=params, json=data, timeout=ClientTimeout(total=self._timeout)) as resp:
+
+                # Await the response body immediately so we can parse it in catch blocks
+                body_bytes = await resp.read()
+                match resp.status:
+                    case 200:
+                        return self._decode_json(body_bytes)
+                    case 400:
+                        self._raise_on_bad_request(body_bytes)
+                    case 401:
+                        self._raise_on_unauthorized(body_bytes)
+                    case 403:
+                        self._raise_on_forbidden(body_bytes)
+                    case 500:
+                        self._raise_on_internal_server_error()
+                    case 404:
+                        raise NotFoundError
+                    case 420:
+                        # 'LoginTemporaryBlocked'
+                        error_data: JsonData = self._decode_json(body_bytes) if body_bytes else {}
+                        seconds = -1
+                        if isinstance(error_data, dict):
+                            seconds = error_data.get('extras', [{}])[0].get('value', '??')
+                        raise LoginTemporaryBlockedError(
+                            f"Login temporarily blocked. ({seconds} seconds remaining)."
+                        )
+                    case 440:
+                        raise SessionTokenError
+                    case 442:
+                        raise LoginAttemptsLimitReachedError("Login attempts limit reached.")
+                    case 444:
+                        raise InvalidUserCodeError("Wrong user code.")
+                    case _:
+                        error_data_again: JsonData = self._decode_json(body_bytes) if body_bytes else {}
+                        if isinstance(error_data, dict):
+                            _LOGGER.error("Unhandled HTTP Error %s: %s", resp.status, error_data_again)
+                        resp.raise_for_status()
+
+        except asyncio.TimeoutError as exc:  # noqa: UP041
+            raise ConnectionTimeoutError(
+                f"Connection to '{self._hostname}' timed out after {self._timeout} seconds."
+            ) from exc
+        except aiohttp.ClientError as exc:
+            # Catch-all for aiohttp connection issues
+            raise ConnectionTimeoutError(f"Network error: {exc!s}") from exc
+
+        raise NotSupportedError
+
+    async def get_version_info(self) -> JsonData:
+        """Find out which REST API versions are supported."""
+        # The one function that does not incorporate self._rest_version in the URL
+        url = f"https://{self._hostname}/rest_api/version"
+        return await self._send_request_url(url, with_session=False, with_user=False)
+
+    async def do_testing(self, panel_serial: str) -> JsonData:
+        """do_testing."""
+        #return await self._send_request("devices")
+        url = f"https://{self._hostname}/rest_api/installer/{self._installer_version}/groups"
+        return await self._send_request_url(url, with_session=True, with_user=True)
+
+    async def _send_request(self, req: str,
+                             data: dict[str, Any] | None = None,
+                             params: dict[str, Any] | None = None,
+                             request_type: RequestType = RequestType.GET,
+                             with_user: bool = True, with_session: bool = True
+    ) -> JsonData:
+        """Send an async GET or POST request to the server."""
+        url = f"https://{self._hostname}/rest_api/{self._rest_version}/{req}"
+        return await self._send_request_url(
+            url,
+            data=data,
+            params=params,
+            request_type=request_type,
+            with_user=with_user,
+            with_session=with_session
+        )
+
+    def _parse_error(self, body: bytes) -> JsonData:
+        """Helper to parse JSON error bodies."""
+        try:
+            return self._decode_json(body)
+        except (ValueError, AttributeError):
+            return {"error": 0, "error_message": "Unknown error"}
+
+    def _raise_on_bad_request(self, error: bytes) -> None:
         """Raise an exception when the API returns a bad request."""
-        api = json.loads(error.decode("utf-8"))
-        # print(api)
+        api = self._parse_error(error)
 
-        if api["error"] == 10001:  # BadRequestParams
-            for pair in api["extras"]:
-                if pair["value"] == "incorrect":
-                    if pair["key"] == "panel_serial":
-                        raise PanelSerialIncorrectError()
-                    elif pair["key"] == "reset_password_code":
-                        raise ResetPasswordCodeIncorrectError()
-                if pair["value"] == "required":
-                    if pair["key"] == "panel_serial":
-                        raise PanelSerialRequiredError()
-                    elif pair["key"] == "email":
-                        raise EmailRequiredError()
-                    elif pair["key"] == "password":
-                        raise PasswordRequiredError()
-                    elif pair["key"] == "app_id":
-                        raise AppIDRequiredError()
-                    elif pair["key"] == "user_code":
-                        raise UserCodeRequiredError()
-                    elif pair["key"] == "new_password":
-                        raise PasswordRequiredError()
-                if pair["value"] == "already_granted":
-                    raise AlreadyGrantedError()
-                if pair["value"] == "already_linked":
-                    raise AlreadyLinkedError()
-                if pair["key"] == "new_password":
-                    raise NewPasswordStrengthError()
-        elif api["error"] == 10004:  # WrongCombination
-            for pair in api["extras"]:
-                if pair["value"] == "wrong_combination":
-                    if pair["key"] == "email" or pair["key"] == "password":
-                        raise WrongUsernameOrPasswordError()
-                    if pair["key"] == "panel_serial" or pair["key"] == "master_user_code":
-                        raise WrongPanelSerialOrMasterUserCodeError()
-        elif api["error"] == 10021:  # WrongUserCode
-            raise UserCodeIncorrectError()
-        elif api["error"] == 400 and api["error_reason_code"] == "PanelNotConnected":
-            raise PanelNotConnectedError()
+        if isinstance(api, dict):
+            if api["error"] == 10001:  # BadRequestParams
+                for pair in api.get("extras", []):
+                    if pair["value"] == "incorrect":
+                        if pair["key"] == "panel_serial":
+                            raise PanelSerialIncorrectError
+                        if pair["key"] == "reset_password_code":
+                            raise ResetPasswordCodeIncorrectError
+                    if pair["value"] == "required":
+                        if pair["key"] == "panel_serial":
+                            raise PanelSerialRequiredError
+                        if pair["key"] == "email":
+                            raise EmailRequiredError
+                        if pair["key"] == "password":
+                            raise PasswordRequiredError
+                        if pair["key"] == "app_id":
+                            raise AppIDRequiredError
+                        if pair["key"] == "user_code":
+                            raise UserCodeRequiredError
+                        if pair["key"] == "new_password":
+                            raise PasswordRequiredError
+                    if pair["value"] == "already_granted":
+                        raise AlreadyGrantedError
+                    if pair["value"] == "already_linked":
+                        raise AlreadyLinkedError
+                    if pair["key"] == "new_password":
+                        raise NewPasswordStrengthError
+            elif api["error"] == 10004:  # WrongCombination
+                for pair in api.get("extras", []):
+                    if pair["value"] == "wrong_combination":
+                        if pair["key"] == "email" or pair["key"] == "password":
+                            raise WrongUsernameOrPasswordError
+                        if pair["key"] == "panel_serial" or pair["key"] == "master_user_code":
+                            raise WrongPanelSerialOrMasterUserCodeError
+            elif api["error"] == 10039:  # Cannot complete command as panel is armed (usually from a bypass sensor command)
+                raise BadRequestPanelIsArmedError
+            elif api["error"] == 10021:  # WrongUserCode
+                raise UserCodeIncorrectError
+            elif api["error"] == 400 and api["error_reason_code"] == "PanelNotConnected":
+                raise PanelNotConnectedError
 
         # Raise a generic error when the library has no
         # specific exception implemented yet.
         raise UndefinedBadRequestError(str(api))
 
-    def __raise_on_forbidden(self, error):
+    def _raise_on_forbidden(self, error: bytes) -> None:
         """Raise an exception when the API returns a forbidden error."""
-        api = json.loads(error.decode("utf-8"))
-        # print(api)
+        api: JsonData = self._decode_json(error)
 
-        if api["error"] == 10010:  # NotAllowed
-            raise NotAllowedError()
-        elif api["error"] == 10002:  # UserAuthRequired
-            raise UserAuthRequiredError()
+        if isinstance(api, dict):
+            if api["error"] == 10010:  # NotAllowed
+                raise NotAllowedError
+            if api["error"] == 10002:  # UserAuthRequired
+                raise UserAuthRequiredError
 
         # Raise a generic error when the library has no
         # specific exception implemented yet.
         raise UndefinedForbiddenError(str(api))
 
-    def __raise_on_unauthorized(self, error):
+    def _raise_on_unauthorized(self, error: bytes) -> None:
         """Raise an exception when the API returns a unauthorized error."""
-        api = json.loads(error.decode("utf-8"))
-        # print(api)
-
+        api = self._decode_json(error)
         # Raise an exception when we are not authorized to access the endpoint
         raise UnauthorizedError(str(api))
 
-    def __send_request(
-        self,
-        endpoint,
-        with_session_token=True,
-        with_user_token=True,
-        data_json=None,
-        request_type=RequestType.GET,
-    ):
-        """Send a GET or POST request to the server. Includes the Session-Token
-        only if with_session_token is True."""
+    def _raise_on_internal_server_error(self) -> None:
+        """Raise an exception when the API returns a unauthorized error."""
+        # Raise an exception when we are not authorized to access the endpoint
+        raise InternalServerError
 
-        # Add host and api version to url
-        if endpoint == VisonicURL.VERSION:
-            url = f"{VisonicURL.BASE.format(self.__hostname)}/{endpoint}"
-        else:
-            url = f"{VisonicURL.BASE.format(self.__hostname)}/{self.__rest_version}/{endpoint}"
-
-        # Prepare the headers to be sent
-        headers = {
-            "Host": self.__hostname,
-            "Connection": "keep-alive",
-            "Accept": "*/*",
-            "User-Agent": self.__user_agent,
-            "Accept-Language": "en-us",
-            "Accept-Encoding": "gzip",
-        }
-
-        # Only needed for POST requests
-        if request_type == "POST":
-            headers["Content-Type"] = "application/json"
-            headers["Content-Length"] = str(len(data_json))
-
-        # Include the session token in the header
-        if with_session_token:
-            headers["Session-Token"] = self.__session_token
-
-        # Include the user authentication token in the header
-        if with_user_token:
-            headers["User-Token"] = self.__user_token
-
-        # Perform the request and raise an exception
-        # if the response is not OK (HTML 200)
-        try:
-            if request_type == "GET":
-                response = self.__session.get(url, headers=headers, timeout=self.__timeout)
-            elif request_type == "POST":
-                response = self.__session.post(url, headers=headers, data=data_json, timeout=self.__timeout)
-            response.raise_for_status()
-        except requests.exceptions.ConnectTimeout as exc:
-            raise ConnectionTimeoutError(
-                f"Connection to '{self.__hostname}' timed out after {str(self.__timeout)} seconds."
-            ) from exc
-        except requests.exceptions.HTTPError as exc:
-            api = json.loads(response.content.decode("utf-8"))
-            if "400 Client Error: Bad Request" in str(exc):
-                self.__raise_on_bad_request(response.content)
-            elif "401 Client Error: Unauthorized" in str(exc):
-                self.__raise_on_unauthorized(response.content)
-            elif "403 Client Error: Forbidden" in str(exc):
-                self.__raise_on_forbidden(response.content)
-            elif "404 Client Error: Not Found" in str(exc):
-                raise NotFoundError() from exc
-            elif "420 Client Error:" in str(exc):
-                # TODO: {'error': 10020, 'error_message': 'Login temporary blocked', 'error_reason_code':
-                # 'LoginTemporaryBlocked', 'extras': [{'key': 'timeout', 'value': 44}]} // 44 = seconds to unblocked
-                raise LoginTemporaryBlockedError(
-                    f"Login is temporary blocked due to too many failed login attempts "
-                    f"({api['extras'][0]['count']} seconds remaining)."
-                ) from exc
-            elif "440 Client Error: Session token not found" in str(exc):
-                raise SessionTokenError() from exc
-            elif "442 Client Error: Login attempts limit reached" in str(exc):
-                raise LoginAttemptsLimitReachedError("Login attempts limit reached.") from exc
-            elif "444 Client Error: Wrong user code" in str(exc):
-                raise InvalidUserCodeError("Authentication failed due to wrong user code.") from exc
-            else:
-                print(api)
-                raise
-
-        # Check HTTP response code
-        if response.status_code == 200:
-            return json.loads(response.content.decode("utf-8"))
-        else:
-            return None
 
     ######################
     # Public API methods #
     ######################
 
-    @property
-    def session_token(self):
-        """Property to keep track of the session token."""
-        return self.__session_token
-
-    @property
-    def hostname(self):
-        """Property to keep track of the API servers hostname."""
-        return self.__hostname
-
-    @property
-    def user_token(self):
-        """Property to keep track of the user token beeing assigned during authentication."""
-        return self.__user_token
-
-    @property
-    def app_id(self):
-        """Property to keep track of the user id (UUID) beeing used."""
-        return self.__app_id
-
-    def get_version_info(self) -> dict:
-        """Find out which REST API versions are supported."""
-        return self.__send_request(
-            VisonicURL.VERSION,
-            with_session_token=False,
-            with_user_token=False,
-            request_type=RequestType.GET,
-        )
-
-    def authenticate(self, email, password):
-        """Try to authenticate and get a user auth token."""
-        auth_info = {
+    async def authenticate_user(self, email: str, password: str) -> bool:
+        """Stage 1: Authenticate user to get User-Token."""
+        data = {
             "email": email,
             "password": password,
-            "app_id": self.__app_id,
+            "app_id": self._app_id
         }
 
-        auth_json = json.dumps(auth_info, separators=(",", ":"))
-        res = self.__send_request(
-            VisonicURL.AUTH,
-            with_session_token=False,
-            with_user_token=False,
-            data_json=auth_json,
-            request_type=RequestType.POST,
-        )
-        if res is not None:
-            self.__user_token = res["user_token"]
+        res: JsonData = await self._send_request("auth", data=data, request_type=RequestType.POST, with_user=False, with_session=False)
+        if res and isinstance(res, dict) and "user_token" in res:
+            self._user_token = res["user_token"]
             return True
-        else:
-            return False
+        return False
 
-    def is_logged_in(self):
-        """Check if the session token is still valid."""
+    async def panel_login(self, panel_serial: str, user_code: str) -> bool:
+        """Stage 2: Link to specific panel to get Session-Token."""
+        self.user_code = user_code
+        data = {
+            "user_code": user_code,
+            "app_type": APP_TYPE,
+            "app_id": self._app_id,
+            "panel_serial": panel_serial
+        }
+
+        # User-Token is required for this call
+        res: JsonData = await self._send_request("panel/login", data=data, request_type=RequestType.POST, with_user=True, with_session=False)
+        if res and isinstance(res, dict) and "session_token" in res:
+            self._session_token = res["session_token"]
+            return True
+        return False
+
+    async def panel_logout(self) -> bool:
+        """Explicitly logout from the panel to free up a session slot."""
+        if not self._session_token:
+            return True
         try:
-            self.get_status()
-            return True
-        except requests.HTTPError:
+            # Most Visonic APIs use a DELETE or POST to /panel/logout
+            # If VisonicURL.LOGOUT isn't in your constants, it's usually 'panel/logout'
+            await self._send_request("panel/logout", request_type=RequestType.POST)
+            self._session_token = None
+        except (UnauthorizedError, SessionTokenError, ConnectionTimeoutError, aiohttp.ClientError) as exc:
+            _LOGGER.debug("Logout failed: %s", exc)
+            return False
+        return True
+
+    async def set_rest_version(self, version: str = "latest") -> None:
+        """Set the rest api version.
+
+        Fetch the supported versions from the API server and if "latest" then automatically
+        configure the library to use the latest version supported by the server,
+        otherwise set the version by the version parameter.
+        """
+        rv = await self.get_version_info()
+        if not rv or not isinstance(rv, dict) or "rest_versions" not in rv:
+            raise UnsupportedRestAPIVersionError("Could not fetch REST versions")
+
+        iv = rv.get('installer_versions')
+        if iv is not None and isinstance(iv, list):
+            installer_versions: list[str] = iv
+            installer_versions.sort(key=float)
+            if len(installer_versions) > 0 and version == "latest":
+                self._installer_version = installer_versions[-1]
+
+        rest_versions: list[str] = rv['rest_versions']
+        rest_versions.sort(key=float)
+        if len(rest_versions) > 0 and version == "latest":
+            self._rest_version = rest_versions[-1]
+        elif version in rest_versions:
+            self._rest_version = version
+        else:
+            raise UnsupportedRestAPIVersionError(f'Rest API version {version} is not supported by server.')
+
+    @property
+    def session_token(self) -> str | None:
+        """Property to keep track of the session token."""
+        return self._session_token
+
+    @property
+    def hostname(self) -> str:
+        """Property to keep track of the API servers hostname."""
+        return self._hostname
+
+    @property
+    def user_token(self) -> str | None:
+        """Property to keep track of the user token being assigned during authentication."""
+        return self._user_token
+
+    @property
+    def app_id(self) -> str:
+        """Property to keep track of the user id (UUID) being used."""
+        return self._app_id
+
+    async def restore_session(self, user_token: str, session_token: str, uuid_key: str) -> None:
+        """Bypass login by injecting saved tokens."""
+        self._user_token = user_token
+        self._session_token = session_token
+        self._app_id = uuid_key
+
+    async def get_status(self) -> JsonData:
+        """Fetch the current state (polling-friendly)."""
+        return await self._send_request("status", request_type=RequestType.GET, with_user=True, with_session=True)
+
+    async def is_logged_in(self) -> bool:
+        """Check if the session token is still valid."""
+        if not self._session_token:
             return False
 
-    def access_grant(self, user_id, email):
+        try:
+            # If get_status succeeds (returns a dict), we are logged in
+            await self.get_status()
+        except (UnauthorizedError, SessionTokenError):
+            # These indicate the token is expired or rejected
+            return False
+        except (ConnectionTimeoutError, aiohttp.ClientError) as err:
+            # For other errors (like timeouts), you might want to log it
+            # but usually, we only return False if the AUTH specifically failed
+            _LOGGER.debug("is_logged_in check failed due to connection: %s", err)
+            return False
+        return True
+
+    async def access_grant(self, user_id: int, email: str) -> JsonData:
         """Grant a user access to the alarm panel via the API."""
         user_data = {"user": user_id, "email": email}
-        user_json = json.dumps(user_data, separators=(",", ":"))
-        return self.__send_request(VisonicURL.ACCESS_GRANT, data_json=user_json, request_type=RequestType.POST)
+        return await self._send_request(VisonicURL.ACCESS_GRANT, data=user_data, request_type=RequestType.POST)
 
-    def access_revoke(self, user_id):
+    async def access_revoke(self, user_id: int) -> JsonData:
         """Revoke access to the alarm panel via the API for a user."""
         user_data = {"user": user_id}
-        user_json = json.dumps(user_data, separators=(",", ":"))
-        return self.__send_request(VisonicURL.ACCESS_REVOKE, data_json=user_json, request_type=RequestType.POST)
+        return await self._send_request(VisonicURL.ACCESS_REVOKE, data=user_data, request_type=RequestType.POST)
 
-    def activate_siren(self):
+    async def activate_siren(self, mode: str = "trigger") -> JsonData:
         """Activate the siren (sound the alarm)."""
-        siren_data = {}
-        siren_json = json.dumps(siren_data, separators=(",", ":"))
-        return self.__send_request(
+        siren_data: dict[str, Any] = {"mode": mode}
+        return await self._send_request(
             VisonicURL.ACTIVATE_SIREN,
-            data_json=siren_json,
+            data=siren_data,
             request_type=RequestType.POST,
         )
 
-    def disable_siren(self, mode):
+    async def disable_siren(self, mode: str) -> JsonData:
         """Disable the siren (mute the alarm)."""
-        siren_data = {"mode": mode}
-        siren_json = json.dumps(siren_data, separators=(",", ":"))
-        return self.__send_request(
+        siren_data: dict[str, Any] = {"mode": mode}
+        return await self._send_request(
             VisonicURL.DISABLE_SIREN,
-            data_json=siren_json,
+            data=siren_data,
             request_type=RequestType.POST,
         )
 
-    def get_alarms(self):
+    async def get_alarms(self) -> JsonData:
         """Get the current alarms."""
-        return self.__send_request(VisonicURL.ALARMS)
+        return await self._send_request(VisonicURL.ALARMS)
 
-    def get_alerts(self):
+    async def get_alerts(self) -> JsonData:
         """Get the current alerts."""
-        return self.__send_request(VisonicURL.ALERTS)
+        return await self._send_request(VisonicURL.ALERTS)
 
-    def get_cameras(self):
+    async def get_cameras(self) -> JsonData:
         """Get the cameras in the system."""
-        return self.__send_request(VisonicURL.CAMERAS)
+        return await self._send_request(VisonicURL.CAMERAS)
 
-    def get_devices(self):
+    async def get_devices(self) -> JsonData:
         """Get all device specific information."""
-        return self.__send_request(VisonicURL.DEVICES)
+        return await self._send_request(VisonicURL.DEVICES)
 
-    def get_email_notifications(self):
+    async def get_email_notifications(self) -> JsonData:
         """Get settings for the email notifications."""
-        return self.__send_request(VisonicURL.NOTIFICATIONS_EMAIL)
+        return await self._send_request(VisonicURL.NOTIFICATIONS_EMAIL)
 
-    def get_events(self):
+    async def get_events(self) -> JsonData:
         """Get the alarm panel events."""
-        return self.__send_request(VisonicURL.EVENTS)
+        return await self._send_request(VisonicURL.EVENTS)
 
-    def get_feature_set(self):
+    async def get_feature_set(self) -> JsonData:
         """Get the alarm panel feature set."""
-        return self.__send_request(VisonicURL.FEATURE_SET)
+        return await self._send_request(VisonicURL.FEATURE_SET)
 
-    def get_locations(self):
+    async def get_locations(self) -> JsonData:
         """Get all locations in the alarm system."""
-        return self.__send_request(VisonicURL.LOCATIONS)
+        return await self._send_request(VisonicURL.LOCATIONS)
 
-    def get_panel_info(self):
+    async def get_panel_access_info(self, panel_serial: str) -> JsonData:
+        """get_panel_access_info."""
+        params = {
+            "app_type": self._app_id,
+            "panel_web_name": panel_serial
+        }
+        return await self._send_request(VisonicURL.PANEL_ACCESS_INFO, params=params, request_type=RequestType.GET, with_session=False)
+
+    async def get_panel_info(self) -> JsonData:
         """The general panel information is only supported in version 4.0."""
-        return self.__send_request(VisonicURL.PANEL_INFO)
+        return await self._send_request(VisonicURL.PANEL_INFO)
 
-    def get_panels(self):
+    async def get_panels(self) -> list[dict[str, Any]]:
         """Get a list of panels."""
-        return self.__send_request(VisonicURL.PANELS)
+        dt: JsonData = await self._send_request(VisonicURL.PANELS, with_session = False)
+        return dt if isinstance(dt, list) else []
 
-    def get_preview_image(self, image_path: str):
-        """Get preview image for camera"""
+    async def get_preview_image(self, image_path: str)-> JsonData | None:
+        """Get preview image for camera."""
         if image_path:
-            return self.__send_request(image_path.replace("/rest_api", ""))
+            return await self._send_request(image_path.replace("/rest_api", ""))
         return None
 
-    def get_process_status(self, process_token):
+    async def get_process_status(self, process_token: str) -> JsonData:
         """Get the current status of a process running on API server."""
-        return self.__send_request(VisonicURL.PROCESS_STATUS.format(process_token))
+        return await self._send_request(VisonicURL.PROCESS_STATUS.format(process_token))
 
-    def get_smart_devices(self):
+    async def get_smart_devices(self) -> JsonData:
         """Get a list of smart devices."""
-        return self.__send_request(VisonicURL.SMART_DEVICES)
+        return await self._send_request(VisonicURL.SMART_DEVICES)
 
-    def get_smart_devices_settings(self):
+    async def get_smart_devices_settings(self) -> JsonData:
         """Get a list of smart devices settings."""
-        return self.__send_request(VisonicURL.SMART_DEVICES_SETTINGS)
+        return await self._send_request(VisonicURL.SMART_DEVICES_SETTINGS)
 
-    def get_status(self):
-        """Get the current status of the alarm system."""
-        return self.__send_request(VisonicURL.STATUS)
-
-    def get_troubles(self):
+    async def get_troubles(self) -> JsonData:
         """Get the current troubles."""
-        return self.__send_request(VisonicURL.TROUBLES)
+        return await self._send_request(VisonicURL.TROUBLES)
 
-    def get_users(self):
+    async def get_auto_devices(self) -> JsonData:
+        """Get the current automation devices."""
+        return await self._send_request(VisonicURL.HOME_AUTOMATION_DEVICES)
+
+    async def get_users(self) -> JsonData | None:
         """Get information about the active users.
-        Note: Only master users can see the active_user_ids!"""
-        return self.__send_request(VisonicURL.USERS)
 
-    def get_wakeup_sms(self):
+        Note: Only master users can see the active_user_ids!
+        """
+        return await self._send_request(VisonicURL.USERS)
+
+    async def get_wakeup_sms(self) -> JsonData:
         """Get the settings needed to wake up the alarm panel via SMS."""
-        return self.__send_request(VisonicURL.WAKEUP_SMS)
+        return await self._send_request(VisonicURL.WAKEUP_SMS)
 
-    def panel_add(self, alias: str, panel_serial: str, access_proof: str, master_user_code: str):
+    async def panel_add(self, alias: str, panel_serial: str, access_proof: str | None, master_user_code: str) -> JsonData:
         """Add a new alarm panel to the user account. A master user code is required."""
-        panel_data = {
-            "alias": alias,
-            "panel_serial": panel_serial,
-            "access_proof": access_proof,
-            "master_user_code": master_user_code,
-        }
-        panel_json = json.dumps(panel_data, separators=(",", ":"))
-        return self.__send_request(VisonicURL.PANEL_ADD, data_json=panel_json, request_type=RequestType.POST)
-
-    def panel_login(self, panel_serial: str, user_code: str):
-        """Try to login to the alarm panel and get a session token."""
-        login_info = {
-            "user_code": user_code,
-            "app_type": self.__app_type,
-            "app_id": self.__app_id,
-            "panel_serial": panel_serial,
-        }
-
-        login_json = json.dumps(login_info, separators=(",", ":"))
-        res = self.__send_request(
-            VisonicURL.PANEL_LOGIN,
-            with_session_token=False,
-            data_json=login_json,
-            request_type=RequestType.POST,
-        )
-        if res:
-            self.__session_token = res["session_token"]
-            return True
+        if access_proof is None:
+            panel_data = {
+                "alias": alias,
+                "panel_serial": panel_serial,
+                "master_user_code": master_user_code,
+            }
         else:
-            return False
+            panel_data = {
+                "alias": alias,
+                "panel_serial": panel_serial,
+                "access_proof": access_proof,
+                "master_user_code": master_user_code,
+            }
+        return await self._send_request(VisonicURL.PANEL_ADD, data=panel_data, request_type=RequestType.POST)
 
-    def panel_rename(self, alias: str, panel_serial: str):
+    async def panel_rename(self, alias: str, panel_serial: str) -> JsonData:
         """Rename an alarm panel."""
         panel_data = {
             "panel_serial": panel_serial,
             "alias": alias,
         }
-        panel_json = json.dumps(panel_data, separators=(",", ":"))
-        return self.__send_request(VisonicURL.PANEL_RENAME, data_json=panel_json, request_type=RequestType.POST)
+        return await self._send_request(VisonicURL.PANEL_RENAME, data=panel_data, request_type=RequestType.POST)
 
-    def panel_unlink(self, panel_serial: str, password: str, app_id: str):
+    async def panel_unlink(self, panel_serial: str, password: str, app_id: str) -> JsonData:
         """Unlink an alarm panel from the user account."""
         panel_data = {
             "panel_serial": panel_serial,
             "password": password,
             "app_id": app_id,
         }
-        panel_json = json.dumps(panel_data, separators=(",", ":"))
-        return self.__send_request(VisonicURL.PANEL_UNLINK, data_json=panel_json, request_type=RequestType.POST)
+        return await self._send_request(VisonicURL.PANEL_UNLINK, data=panel_data, request_type=RequestType.POST)
 
-    def password_reset(self, email: str):
+    async def password_reset(self, email: str) -> JsonData:
         """Request a password reset email. An email will be sent to the email address provided."""
         reset_data = {"email": email}
-        reset_json = json.dumps(reset_data, separators=(",", ":"))
-        return self.__send_request(
+        return await self._send_request(
             VisonicURL.PASSWORD_RESET,
-            data_json=reset_json,
+            data=reset_data,
             request_type=RequestType.POST,
         )
 
-    def password_reset_complete(self, reset_password_code: str, new_password: str):
+    async def password_reset_complete(self, reset_password_code: str, new_password: str) -> JsonData:
         """Complete the password reset request."""
         reset_data = {
             "reset_password_code": reset_password_code,
             "new_password": new_password,
-            "app_id": self.__app_id,
+            "app_id": self._app_id,
         }
-        reset_json = json.dumps(reset_data, separators=(",", ":"))
-        return self.__send_request(
+        return await self._send_request(
             VisonicURL.PASSWORD_RESET_COMPLETE,
-            data_json=reset_json,
+            data=reset_data,
             request_type=RequestType.POST,
         )
 
-    def set_email_notifications(self, mode: str):
+    async def set_email_notifications(self, mode: str) -> JsonData:
         """Set settings for the email notifications."""
         notification_data = {"mode": mode}
-        notification_json = json.dumps(notification_data, separators=(",", ":"))
-        return self.__send_request(
+        return await self._send_request(
             VisonicURL.NOTIFICATIONS_EMAIL,
-            data_json=notification_json,
+            data=notification_data,
             request_type=RequestType.POST,
         )
 
-    def set_bypass_zone(self, zone: int, set_enabled: bool):
+    async def set_bypass_zone(self, zone: int, set_enabled: bool) -> JsonData:
         """Enable or disable bypass mode for a zone."""
-        bypass_data = {"zone": zone, "set": set_enabled}
-        bypass_json = json.dumps(bypass_data, separators=(",", ":"))
-        return self.__send_request(
+        bypass_data: dict[str, Any] = {"zone": zone, "set": set_enabled}
+        return await self._send_request(
             VisonicURL.SET_BYPASS_ZONE,
-            data_json=bypass_json,
+            data=bypass_data,
             request_type=RequestType.POST,
         )
 
-    def set_name(self, object_class: str, device_id: int, name: str):
-        """Set the name of any type of object in the alarm system."""
-        name_data = {"class": object_class, "id": device_id, "name": name}
-        name_json = json.dumps(name_data, separators=(",", ":"))
-        return self.__send_request(VisonicURL.SET_NAME, data_json=name_json, request_type=RequestType.POST)
+    async def make_video(self, device: int) -> JsonData:
+        """Make a video."""
+        data = {
+            "camera_id": 1,
+        }
 
-    def set_user_code(self, user_code: str, user_id: str):
+        return await self._send_request(
+            VisonicURL.MAKE_VIDEO,
+            data=data,
+            request_type=RequestType.POST,
+        )
+
+    async def set_name(self, object_class: str, device_id: int, name: str) -> JsonData:
+        """Set the name of any type of object in the alarm system."""
+        name_data: dict[str, Any] = {"class": object_class, "id": device_id, "name": name}
+        return await self._send_request(VisonicURL.SET_NAME, data=name_data, request_type=RequestType.POST)
+
+    async def set_user_code(self, user_code: str, user_id: int) -> JsonData:
         """Set the code of a user in the alarm system."""
         code_data = {"user_code": user_code, "user_id": user_id}
-        code_json = json.dumps(code_data, separators=(",", ":"))
-        return self.__send_request(VisonicURL.SET_USER_CODE, data_json=code_json, request_type=RequestType.POST)
+        return await self._send_request(VisonicURL.SET_USER_CODE, data=code_data, request_type=RequestType.POST)
 
-    def arm_home(self, partition: int):
+    async def _set_arm_state(self, partition: int, state: str, user_code: str | None) -> JsonData:
+        uc = self.user_code if user_code is None or len(user_code) != 4 else user_code
+        data: dict[str, Any] = {"partition": partition, "state": state, "user_code": uc}
+        return await self._send_request(VisonicURL.SET_STATE, data=data, request_type=RequestType.POST)
+
+    async def arm_home(self, partition: int, user_code : str | None = None) -> JsonData:
         """Arm in Home mode."""
-        arm_info = {"partition": partition, "state": TEXT_STATUS_HOME}
-        arm_json = json.dumps(arm_info, separators=(",", ":"))
-        return self.__send_request(VisonicURL.SET_STATE, data_json=arm_json, request_type=RequestType.POST)
+        return await self._set_arm_state(partition, TEXT_STATUS_HOME, user_code)
 
-    def arm_away(self, partition: id):
+    async def arm_away(self, partition: int, user_code : str | None = None) -> JsonData:
         """Arm in Away mode."""
-        arm_info = {"partition": partition, "state": TEXT_STATUS_AWAY}
-        arm_json = json.dumps(arm_info, separators=(",", ":"))
-        return self.__send_request(VisonicURL.SET_STATE, data_json=arm_json, request_type=RequestType.POST)
+        return await self._set_arm_state(partition, TEXT_STATUS_AWAY, user_code)
 
-    def disarm(self, partition: id):
+    async def arm_home_instant(self, partition: int, user_code : str | None = None) -> JsonData:
+        """Arm in Home Instant mode."""
+        return await self._set_arm_state(partition, TEXT_STATUS_HOME, user_code)  # Cannot set instant
+
+    async def arm_away_instant(self, partition: int, user_code : str | None = None) -> JsonData:
+        """Arm in Away Instant mode."""
+        return await self._set_arm_state(partition, TEXT_STATUS_AWAY, user_code)  # Cannot set instant
+
+    async def disarm(self, partition: int, user_code : str | None = None) -> JsonData:
         """Disarm the alarm system."""
-        disarm_info = {"partition": partition, "state": TEXT_STATUS_DISARM}
-        disarm_json = json.dumps(disarm_info, separators=(",", ":"))
-        return self.__send_request(VisonicURL.SET_STATE, data_json=disarm_json, request_type=RequestType.POST)
+        return await self._set_arm_state(partition, TEXT_STATUS_DISARM, user_code)
 
-    def send_get(self, url):
-        """Send a custom POST request."""
-        return self.__send_request(url)
+    async def send_get(self, url: str, data: dict[str, Any] | None) -> JsonData:
+        """Send a custom GET request."""
+        return await self._send_request_url(url=url, data=data)
 
-    def send_post(self, url, data):
+    async def send_post(self, url: str, data: dict[str, Any] | None) -> JsonData:
         """Send a custom POST request."""
-        data_json = json.dumps(data, separators=(",", ":"))
-        return self.__send_request(url, data_json=data_json, request_type=RequestType.POST)
+        return await self._send_request_url(url=url, data=data, request_type=RequestType.POST)
