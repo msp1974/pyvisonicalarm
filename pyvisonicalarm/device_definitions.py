@@ -1,6 +1,6 @@
 """Device type definitions."""
 
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 from .const import SensorGroup
 from .devices import (
@@ -29,7 +29,7 @@ class device_type(NamedTuple):
 # The powerlink is a POWER_LINK in both device and subtype, include in both lists to make sure
 # The pgm is a PGM device and PGM_ON_PANEL subtype, include in both lists to make sure
 
-DEVICE_TYPES: dict[str, Any] = {
+DEVICE_TYPES: dict[str, device_type] = {
     "CONTROL_PANEL": device_type(PanelDevice, SensorGroup.PANEL),
     "POWER_LINK": device_type(GenericDevice, SensorGroup.COMMS),
     "GSM": device_type(GSMDevice, SensorGroup.COMMS),

@@ -25,10 +25,18 @@ from .devices import Device, GenericDevice
 class AlarmSystem:
     """Class definition of the main alarm system."""
 
-    def __init__(self, new_api: API):
+    def __init__(self, new_api: API) -> None:
         """Alarm system initialisation."""
         self.__api = new_api
         self.user_code: str = ""
+
+    @staticmethod
+    def _get_token(data: JsonData, key: str) -> str | None:
+        if isinstance(data, dict):
+            value = data.get(key)
+            if isinstance(value, str):
+                return value
+        return None
 
     # System properties
     @property
@@ -59,37 +67,37 @@ class AlarmSystem:
     async def activate_siren(self, mode: str) -> str | None:
         """Activate the siren (sound the alarm)."""
         cmd = await self.__api.activate_siren(mode)
-        return cmd.get("process_token") if isinstance(cmd, dict) else None
+        return self._get_token(cmd, "process_token")
 
     async def disable_siren(self, mode: str = "all") -> str | None:
         """Disable the siren (mute the alarm)."""
         cmd = await self.__api.disable_siren(mode=mode)
-        return cmd.get("process_token") if isinstance(cmd, dict) else None
+        return self._get_token(cmd, "process_token")
 
     async def arm_home(self, partition:int = -1, user_code : str | None = None) -> str | None:
         """Send Arm Home command to the alarm system."""
         cmd = await self.__api.arm_home(partition, user_code)
-        return cmd.get("process_token") if isinstance(cmd, dict) else None
+        return self._get_token(cmd, "process_token")
 
     async def arm_away(self, partition:int = -1, user_code : str | None = None) -> str | None:
         """Send Arm Away command to the alarm system."""
         cmd = await self.__api.arm_away(partition, user_code)
-        return cmd.get("process_token") if isinstance(cmd, dict) else None
+        return self._get_token(cmd, "process_token")
 
     async def arm_home_instant(self, partition:int = -1, user_code : str | None = None) -> str | None:
         """Send Arm Home command to the alarm system."""
         cmd = await self.__api.arm_home_instant(partition, user_code)
-        return cmd.get("process_token") if isinstance(cmd, dict) else None
+        return self._get_token(cmd, "process_token")
 
     async def arm_away_instant(self, partition:int = -1, user_code : str | None = None) -> str | None:
         """Send Arm Away command to the alarm system."""
         cmd = await self.__api.arm_away_instant(partition, user_code)
-        return cmd.get("process_token") if isinstance(cmd, dict) else None
+        return self._get_token(cmd, "process_token")
 
     async def disarm(self, partition:int = -1, user_code : str | None = None) -> str | None:
         """Send Disarm command to the alarm system."""
         cmd = await self.__api.disarm(partition, user_code)
-        return cmd.get("process_token") if isinstance(cmd, dict) else None
+        return self._get_token(cmd, "process_token")
 
     async def get_alarms(self) -> list[Alarm]:
         """Return alarms."""
@@ -116,7 +124,7 @@ class AlarmSystem:
     async def make_video(self, device: int) -> str | None:
         """Make a video."""
         cmd = await self.__api.make_video(device)
-        return cmd.get("process_token") if isinstance(cmd, dict) else None
+        return self._get_token(cmd, "process_token")
 
     def _get_data_from_warnings(self, warnings: list[dict[str,str]] | None) -> tuple[bool, str | None , bool , bool , bool]:
         # set default values
@@ -148,7 +156,7 @@ class AlarmSystem:
 
     async def get_devices(self) -> list[Device]:
         """Fetch all the devices that are available."""
-        device_list = []
+        device_list: list[Device] = []
         devices: dict[str, Any] | list[dict[str, Any]] = await self.__api.get_devices()
         if isinstance(devices, dict):
             devices = [devices] # if a single dict then make it a list of 1
@@ -199,7 +207,13 @@ class AlarmSystem:
     async def get_rest_versions(self) -> list[str]:
         """Fetch the supported API versions."""
         dt: JsonData = await self.__api.get_version_info()
-        return dt.get("rest_versions", []) if isinstance(dt, dict) else []
+        if isinstance(dt, dict):
+            versions = dt.get("rest_versions", [])
+            if isinstance(versions, list) and all(
+                isinstance(item, str) for item in versions
+            ):
+                return [item for item in versions if isinstance(item, str)]
+        return []
 
     async def get_status(self) -> Status | None:
         """Fetch the current state of the alarm system."""
@@ -255,17 +269,17 @@ class AlarmSystem:
     async def password_reset_complete(self, reset_password_code: str, new_password: str) -> str | None:
         """Complete the password reset by entering the reset code received in the email and a new password."""
         dt: JsonData = await self.__api.password_reset_complete(reset_password_code, new_password)
-        return dt.get("user_token") if isinstance(dt, dict) else None
+        return self._get_token(dt, "user_token")
 
     async def set_bypass_zone(self, zone: int, set_enabled: bool) -> str | None:
         """Enabled or disable zone bypassing (for example, bypass a sensor to disable it)."""
         dt: JsonData = await self.__api.set_bypass_zone(zone, set_enabled)
-        return dt.get("process_token") if isinstance(dt, dict) else None
+        return self._get_token(dt, "process_token")
 
     async def set_name_user(self, user_id: int, name: str) -> str | None:
         """Set the name of a user by user ID."""
         dt: JsonData = await self.__api.set_name("USER", user_id, name)
-        return dt.get("process_token") if isinstance(dt, dict) else None
+        return self._get_token(dt, "process_token")
 
     async def set_rest_version(self, version: str="latest") -> None:
         """Set the REST version."""
@@ -274,4 +288,4 @@ class AlarmSystem:
     async def set_user_code(self, user_id: int, user_code: str) -> str | None:
         """Set the code of a user by user ID."""
         dt: JsonData = await self.__api.set_user_code(user_code, user_id)
-        return dt.get("process_token") if isinstance(dt, dict) else None
+        return self._get_token(dt, "process_token")

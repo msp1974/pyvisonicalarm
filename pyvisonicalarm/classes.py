@@ -1,26 +1,34 @@
 """Classes for Alarm Entities."""
 
-from collections.abc import Callable
-from dataclasses import dataclass
 import functools
 import inspect
-from typing import Any
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any, overload
 
 from .const import TEXT_UNKNOWN
 
 
-# Decorator function to set string output to title case
-def title_case(
-    func: Callable[..., str | None],
-) -> Callable[..., str | None]:
+@overload
+def title_case[**P](func: Callable[P, str]) -> Callable[P, str]: ...
+
+
+@overload
+def title_case[**P](func: Callable[P, str | None]) -> Callable[P, str | None]: ...
+
+
+def title_case[**P](
+    func: Callable[P, str | None],
+) -> Callable[P, str | None]:
     """Format string output to title case."""
 
     @functools.wraps(func)
-    def wrapper(*args: Any, **kwargs: Any) -> str | None:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> str | None:
         result = func(*args, **kwargs)
         if result is None:
             return None
         return result.title()
+
     return wrapper
 
 
@@ -49,9 +57,23 @@ class BaseClass:
         return f"{type(self)!s}: {res}"
 
     def _is_property(self, attr : tuple[str, Any]) -> bool:
-        if not ((attr[0].startswith("__") and attr[0].endswith("__")) or attr[0].startswith("_")):
-            return True
-        return False
+        return bool(not (attr[0].startswith("__") and attr[0].endswith("__") or attr[0].startswith("_")))
+
+    def _get_optional[T](self, key: str, value_type: type[T]) -> T | None:
+        """Read a scalar without exposing untyped JSON values."""
+        value = self._data.get(key)
+        return value if isinstance(value, value_type) else None
+
+    def _get_int_list(self, key: str) -> list[int] | None:
+        """Read a list of integer identifiers."""
+        value = self._data.get(key)
+        if value is None:
+            return None
+        if not isinstance(value, list) or any(
+            not isinstance(item, int) for item in value
+        ):
+            raise ValueError(f"Expected a list of integers for {key}")
+        return [item for item in value if isinstance(item, int)]
 
     def _get_key(self, key: str, default: Any | None) -> Any | None:
         """Get key value in data or return default."""
@@ -118,13 +140,12 @@ class Camera(BaseClass):
     @title_case
     def location(self) -> str | None:
         """Return camera location."""
-        return self._data.get("location")
+        return self._get_optional("location", str)
 
     @property
     def partitions(self) -> list[int]:
         """Return camera partitions."""
-        val: list[int] = self._data.get("partitions", [])
-        return val
+        return self._get_int_list("partitions") or []
 
     @property
     def preenroll(self) -> bool:
@@ -135,29 +156,29 @@ class Camera(BaseClass):
     @property
     def preview_path(self) -> str | None:
         """Get camera preview path."""
-        return self._data.get("preview_path")
+        return self._get_optional("preview_path", str)
 
     @property
     def status(self) -> str | None:
         """Get camera status."""
-        return self._data.get("status")
+        return self._get_optional("status", str)
 
     @property
     def timestamp(self) -> str | None:
         """Get camera timestamp."""
         # TODO: Convert to datetime
-        return self._data.get("timestamp")
+        return self._get_optional("timestamp", str)
 
     @property
     def zone(self) -> int | None:
         """Get camera zone id."""
-        return self._data.get("zone")
+        return self._get_optional("zone", int)
 
     @property
     @title_case
     def zone_name(self) -> str | None:
         """Get camera zone name."""
-        return self._data.get("zone_name")
+        return self._get_optional("zone_name", str)
 
 
 @dataclass
@@ -181,24 +202,24 @@ class Event(BaseClass):
     @title_case
     def label(self) -> str | None:
         """Event label."""
-        return self._data.get("label")
+        return self._get_optional("label", str)
 
     @property
     def description(self) -> str | None:
         """Event description."""
-        return self._data.get("description")
+        return self._get_optional("description", str)
 
     @property
     @title_case
     def appointment(self) -> str | None:
         """Event appointment."""
-        return self._data.get("appointment")
+        return self._get_optional("appointment", str)
 
     @property
     def datetime(self) -> str | None:
         """Event datetime."""
         # TODO: make datetime
-        return self._data.get("datetime")
+        return self._get_optional("datetime", str)
 
     @property
     def video(self) -> bool:
@@ -210,12 +231,12 @@ class Event(BaseClass):
     @title_case
     def device_type(self) -> str | None:
         """Event device type."""
-        return self._data.get("device_type")
+        return self._get_optional("device_type", str)
 
     @property
     def zone(self) -> int | None:
         """Event zone."""
-        return self._data.get("zone")
+        return self._get_optional("zone", int)
 
     @property
     def partitions(self) -> set[int] | None:
@@ -225,7 +246,7 @@ class Event(BaseClass):
     @property
     def name(self) -> str | None:
         """Event name."""
-        return self._data.get("name")
+        return self._get_optional("name", str)
 
 
 @dataclass
@@ -234,79 +255,94 @@ class FeatureSet(BaseClass):
 
     # Event properties
     @property
-    def events_enabled(self) -> Any:
+    def events_enabled(self) -> bool | None:
         """Get if events enabled."""
-        return self._get_nested_key("events.is_enabled")
+        value = self._get_nested_key("events.is_enabled")
+        return value if isinstance(value, bool) else None
 
     @property
-    def datetime_enabled(self) -> Any:
+    def datetime_enabled(self) -> bool | None:
         """Get if datetime enabled."""
-        return self._get_nested_key("datetime.is_enabled")
+        value = self._get_nested_key("datetime.is_enabled")
+        return value if isinstance(value, bool) else None
 
     @property
-    def partitions_enabled(self) -> Any:
+    def partitions_enabled(self) -> bool | None:
         """Getof partitions enabled."""
-        return self._get_nested_key("partitions.is_enabled")
+        value = self._get_nested_key("partitions.is_enabled")
+        return value if isinstance(value, bool) else None
 
     @property
-    def partitions_has_labels(self) -> Any:
+    def partitions_has_labels(self) -> bool | None:
         """Get if partitions labels enabled."""
-        return self._get_nested_key("partitions.is_labels_enabled")
+        value = self._get_nested_key("partitions.is_labels_enabled")
+        return value if isinstance(value, bool) else None
 
     @property
-    def partitions_max_count(self) -> Any:
+    def partitions_max_count(self) -> int | None:
         """Get max supported partitions."""
-        return self._get_nested_key("partitions.max_partitions")
+        value = self._get_nested_key("partitions.max_partitions")
+        return value if isinstance(value, int) else None
 
     @property
-    def devices_enabled(self) -> Any:
+    def devices_enabled(self) -> bool | None:
         """Get if devices enabled."""
-        return self._get_nested_key("devices.is_enabled")
+        value = self._get_nested_key("devices.is_enabled")
+        return value if isinstance(value, bool) else None
 
     @property
-    def sirens_can_enable(self) -> Any:
+    def sirens_can_enable(self) -> bool | None:
         """Get if can enable sirens."""
-        return self._get_nested_key("sirens.can_enable")
+        value = self._get_nested_key("sirens.can_enable")
+        return value if isinstance(value, bool) else None
 
     @property
-    def sirens_can_disable(self) -> Any:
+    def sirens_can_disable(self) -> bool | None:
         """Get if can disable sirens."""
-        return self._get_nested_key("sirens.can_disable")
+        value = self._get_nested_key("sirens.can_disable")
+        return value if isinstance(value, bool) else None
 
     @property
-    def home_automation_devices_enabled(self) -> Any:
+    def home_automation_devices_enabled(self) -> bool | None:
         """Get if home automation devices enabled."""
-        return self._get_nested_key("home_automation_devices.is_enabled")
+        value = self._get_nested_key("home_automation_devices.is_enabled")
+        return value if isinstance(value, bool) else None
 
     @property
-    def state_enabled(self) -> Any:
+    def state_enabled(self) -> bool | None:
         """Get if state enabled."""
-        return self._get_nested_key("state.is_enabled")
+        value = self._get_nested_key("state.is_enabled")
+        return value if isinstance(value, bool) else None
 
     @property
-    def state_can_set(self) -> Any:
+    def state_can_set(self) -> bool | None:
         """Get if state can be set."""
-        return self._get_nested_key("state.can_set")
+        value = self._get_nested_key("state.can_set")
+        return value if isinstance(value, bool) else None
 
     @property
-    def state_can_get(self) -> Any:
+    def state_can_get(self) -> bool | None:
         """Get if state can be read."""
-        return self._get_nested_key("state.can_get")
+        value = self._get_nested_key("state.can_get")
+        return value if isinstance(value, bool) else None
 
     @property
-    def faults_enabled(self) -> Any:
+    def faults_enabled(self) -> bool | None:
         """Get if faults enabled."""
-        return self._get_nested_key("faults.is_enabled")
+        value = self._get_nested_key("faults.is_enabled")
+        return value if isinstance(value, bool) else None
 
     @property
-    def diagnostic_enabled(self) -> Any:
+    def diagnostic_enabled(self) -> bool | None:
         """Get if diagnostic enabled."""
-        return self._get_nested_key("diagnostic.is_enabled")
+        value = self._get_nested_key("diagnostic.is_enabled")
+        return value if isinstance(value, bool) else None
 
     @property
-    def wifi_enabled(self) -> Any:
+    def wifi_enabled(self) -> bool | None:
         """Get if wifi enabled."""
-        return self._get_nested_key("wifi.is_enabled")
+        value = self._get_nested_key("wifi.is_enabled")
+        return value if isinstance(value, bool) else None
 
 
 @dataclass
@@ -314,20 +350,20 @@ class Location(BaseClass):
     """Class definition of a location in the alarm system."""
 
     @property
-    def id(self) -> Any:  # pylint: disable=invalid-name
+    def id(self) -> int | None:  # pylint: disable=invalid-name
         """Location ID."""
-        return self._data.get("hel_id")
+        return self._get_optional("hel_id", int)
 
     @property
     @title_case
-    def name(self) -> Any:
+    def name(self) -> str | None:
         """Location name."""
-        return self._data.get("name")
+        return self._get_optional("name", str)
 
     @property
-    def is_editable(self) -> Any:
+    def is_editable(self) -> bool | None:
         """Location is editable."""
-        return self._data.get("is_editable")
+        return self._get_optional("is_editable", bool)
 
 
 @dataclass
@@ -337,7 +373,7 @@ class PanelInfoPartition(BaseClass):
     @property
     def id(self) -> int | None:  # pylint: disable=invalid-name
         """Partition ID."""
-        return self._data.get("id")
+        return self._get_optional("id", int)
 
     @property
     def active(self) -> bool:
@@ -347,17 +383,17 @@ class PanelInfoPartition(BaseClass):
     @property
     def exit_delay_time(self) -> int | None:
         """Get partition exit delay."""
-        return self._data.get("exit_delay_time")
+        return self._get_optional("exit_delay_time", int)
 
     @property
     def state_set(self) -> str | None:
         """Get partition state."""
-        return self._data.get("state_set")
+        return self._get_optional("state_set", str)
 
     @property
     def name(self) -> str | None:
         """Get partition name."""
-        return self._data.get("name")
+        return self._get_optional("name", str)
 
 
 @dataclass
@@ -367,37 +403,37 @@ class PanelInfoFeatures(BaseClass):
     @property
     def video_on_demand(self) -> bool | None:
         """Get if supports video."""
-        return self._data.get("video_on_demand")
+        return self._get_optional("video_on_demand", bool)
 
     @property
     def alert(self) -> bool | None:
         """Get alerts."""
-        return self._data.get("alert")
+        return self._get_optional("alert", bool)
 
     @property
     def enabling_siren(self) -> bool | None:
         """Get if supports enabling siren."""
-        return self._data.get("enabling_siren")
+        return self._get_optional("enabling_siren", bool)
 
     @property
     def disabling_siren(self) -> bool | None:
         """Get if supports disabling siren."""
-        return self._data.get("disabling_siren")
+        return self._get_optional("disabling_siren", bool)
 
     @property
     def wi_fi_connection(self) -> bool | None:
         """Get if supports wifi."""
-        return self._data.get("wi_fi_connection")
+        return self._get_optional("wi_fi_connection", bool)
 
     @property
     def set_date_time(self) -> bool | None:
         """Get date time."""
-        return self._data.get("set_date_time")
+        return self._get_optional("set_date_time", bool)
 
     @property
     def outputs_setup(self) -> bool | None:
         """Get outputs."""
-        return self._data.get("outputs_setup")
+        return self._get_optional("outputs_setup", bool)
 
 
 @dataclass
@@ -408,46 +444,48 @@ class PanelInfo(BaseClass):
     @title_case
     def bypass_mode(self) -> str | None:
         """Bypass Mode."""
-        return self._data.get("bypass_mode")
+        return self._get_optional("bypass_mode", str)
 
     @property
     @title_case
     def current_user(self) -> str | None:
         """Current User."""
-        return self._data.get("current_user")
+        return self._get_optional("current_user", str)
 
     @property
     def local_wakeup_needed(self) -> bool | None:
         """Local Wakeup Needed."""
-        return self._data.get("local_wakeup_needed")
+        return self._get_optional("local_wakeup_needed", bool)
 
     @property
     @title_case
     def manufacturer(self) -> str | None:
         """Manufacturer."""
-        return self._data.get("manufacturer")
+        return self._get_optional("manufacturer", str)
 
     @property
     @title_case
     def model(self) -> str | None:
         """Model name."""
-        return self._data.get("model")
+        return self._get_optional("model", str)
 
     @property
     def remote_admin_requires_user_acceptance(self) -> bool | None:
         """Programming requires user acceptance."""
-        return self._data.get("remote_switch_to_programming_mode_requires_user_acceptance")
+        return self._get_optional(
+            "remote_switch_to_programming_mode_requires_user_acceptance", bool
+        )
 
     @property
     def serial(self) -> str | None:
         """Serial no."""
-        return self._data.get("serial")
+        return self._get_optional("serial", str)
 
     @property
     def multi_partitions(self) -> bool | None:
         """Multi partitions enabled."""
         p = self._data.get("partitions")
-        return p and len(p) > 1
+        return len(p) > 1 if p is not None else None
 
     @property
     def partitions(self) -> list[PanelInfoPartition]:
@@ -469,12 +507,12 @@ class Panel(BaseClass):
     @property
     def panel_serial(self) -> str | None:
         """Get panel serial."""
-        return self._data.get("panel_serial")
+        return self._get_optional("panel_serial", str)
 
     @property
     def alias(self) -> str | None:
         """Get panel alias."""
-        return self._data.get("alias")
+        return self._get_optional("alias", str)
 
 
 @dataclass
@@ -485,27 +523,28 @@ class Partition(BaseClass):
     @property
     def id(self) -> int | None:  # pylint: disable=invalid-name
         """Get partition id."""
-        return self._data.get("id")
+        return self._get_optional("id", int)
 
     @property
-    def state(self) -> Any:
+    def state(self) -> str | None:
         """Get partition state."""
-        return self._data.get("state")
+        return self._get_optional("state", str)
 
     @property
     def status(self) -> str | None:
         """Get partition status."""
-        return self._data.get("status")
+        return self._get_optional("status", str)
 
     @property
     def ready(self) -> bool | None:
         """Get if partition ready."""
-        return self._data.get("ready")
+        return self._get_optional("ready", bool)
 
     @property
-    def options(self) -> list[Any] | None:
+    def options(self) -> list[object] | None:
         """Get partition options."""
-        return self._data.get("options")
+        value = self._data.get("options")
+        return list(value) if isinstance(value, list) else None
 
 
 @dataclass
@@ -516,22 +555,22 @@ class Process(BaseClass):
     @property
     def token(self) -> str | None:
         """Get process token."""
-        return self._data.get("token")
+        return self._get_optional("token", str)
 
     @property
     def status(self) -> str | None:
         """Get process status."""
-        return self._data.get("status")
+        return self._get_optional("status", str)
 
     @property
     def message(self) -> str | None:
         """Get process message."""
-        return self._data.get("message")
+        return self._get_optional("message", str)
 
     @property
     def error(self) -> str | None:
         """Get process error."""
-        return self._data.get("error")
+        return self._get_optional("error", str)
 
 
 @dataclass
@@ -542,7 +581,7 @@ class Status(BaseClass):
     @property
     def connected(self) -> bool | None:
         """Get if connected."""
-        return self._data.get("connected")
+        return self._get_optional("connected", bool)
 
     @property
     def bba_connected(self) -> bool:
@@ -617,54 +656,54 @@ class Alarm(BaseClass):
     @property
     def device_type(self) -> str | None:
         """Device type."""
-        return self._data.get("device_type")
+        return self._get_optional("device_type", str)
 
     @property
     def alarm_type(self) -> str | None:
         """Alarm type."""
-        return self._data.get("alarm_type")
+        return self._get_optional("alarm_type", str)
 
     @property
     def date_time(self) -> str | None:
         """Date time of alarm."""
-        return self._data.get("datetime")
+        return self._get_optional("datetime", str)
 
     @property
     def has_video(self) -> bool | None:
         """Has video."""
-        return self._data.get("has_video")
+        return self._get_optional("has_video", bool)
 
     @property
     def event_id(self) -> int | None:
         """Event id."""
-        return self._data.get("evt_id")
+        return self._get_optional("evt_id", int)
 
     @property
     @title_case
     def location(self) -> str | None:
         """Location."""
-        return self._data.get("location")
+        return self._get_optional("location", str)
 
     @property
     def partitions(self) -> list[int] | None:
         """Partitions."""
-        return self._data.get("partitions")
+        return self._get_int_list("partitions")
 
     @property
     def zone(self) -> int | None:
         """Zone ID."""
-        return self._data.get("zone")
+        return self._get_optional("zone", int)
 
     @property
     @title_case
     def zone_name(self) -> str | None:
         """Zone type."""
-        return self._data.get("zone_name")
+        return self._get_optional("zone_name", str)
 
     @property
     def zone_type(self) -> str | None:
         """Zone type."""
-        return self._data.get("zone_type")
+        return self._get_optional("zone_type", str)
 
 
 @dataclass
@@ -675,39 +714,39 @@ class Trouble(BaseClass):
     @property
     def device_type(self) -> str | None:
         """Device type."""
-        return self._data.get("device_type")
+        return self._get_optional("device_type", str)
 
     @property
     @title_case
     def location(self) -> str | None:
         """Location."""
-        return self._data.get("location")
+        return self._get_optional("location", str)
 
     @property
     def partitions(self) -> list[int] | None:
         """Partitions."""
-        return self._data.get("partitions")
+        return self._get_int_list("partitions")
 
     @property
     def trouble_type(self) -> str | None:
         """Trouble type."""
-        return self._data.get("trouble_type")
+        return self._get_optional("trouble_type", str)
 
     @property
     def zone(self) -> int | None:
         """Zone ID."""
-        return self._data.get("zone")
+        return self._get_optional("zone", int)
 
     @property
     @title_case
     def zone_name(self) -> str | None:
         """Zone type."""
-        return self._data.get("zone_name")
+        return self._get_optional("zone_name", str)
 
     @property
     def zone_type(self) -> str | None:
         """Zone type."""
-        return self._data.get("zone_type")
+        return self._get_optional("zone_type", str)
 
 
 @dataclass
@@ -718,23 +757,23 @@ class User(BaseClass):
     @property
     def id(self) -> int | None:  # pylint: disable=invalid-name
         """User ID."""
-        return self._data.get("id")
+        return self._get_optional("id", int)
 
     @property
     @title_case
     def name(self) -> str | None:
         """User name."""
-        return self._data.get("name")
+        return self._get_optional("name", str)
 
     @property
     def email(self) -> str | None:
         """User email."""
-        return self._data.get("email")
+        return self._get_optional("email", str)
 
     @property
     def partitions(self) -> list[int] | None:
         """Device is active."""
-        return self._data.get("partitions")
+        return self._get_int_list("partitions")
 
 
 @dataclass
@@ -745,9 +784,9 @@ class WakeupSMS(BaseClass):
     @property
     def phone_number(self) -> str | None:
         """Get SMS phone number."""
-        return self._data.get("phone")
+        return self._get_optional("phone", str)
 
     @property
     def message(self) -> str | None:
         """Get sms message."""
-        return self._data.get("sms")
+        return self._get_optional("sms", str)
