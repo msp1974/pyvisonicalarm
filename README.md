@@ -481,3 +481,20 @@ alarm.get_status().partitions[0].state  # Output: 'DISARM'
 ## Examples
 
 Find more examples here: [/visonicalarm/examples](https://github.com/msp1974/pyvisonicalarm/tree/master/examples)
+
+
+## Typing and development
+
+Python 3.12 or newer is required.
+The package includes inline type annotations and a `py.typed` marker for type checkers. Raw JSON responses retain flexible types; the alarm and model interfaces expose specific return types.
+
+Install the development dependencies and run the checks in a virtual environment:
+
+```shell
+python3 -m pip install -r requirements-dev.txt
+python3 -m mypy
+python3 -m pytest
+python3 -m build
+```
+
+The type checks include a consumer example in `tests/typing/consumer.py`.

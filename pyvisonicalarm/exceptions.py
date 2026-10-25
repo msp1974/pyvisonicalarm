@@ -6,7 +6,7 @@ class Error(Exception):
 
     message = ""
 
-    def __init__(self, error: str = ""):
+    def __init__(self, error: str = "") -> None:
         """Initialise."""
         if error:
             self.message = f"{self.message} - {error}"

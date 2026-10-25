@@ -1,0 +1,8 @@
+-r requirements.txt
+build
+mypy
+pytest
+pytest-asyncio
+ruff
+setuptools
+wheel

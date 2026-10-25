@@ -68,6 +68,7 @@ class API:
         self._session_token: str | None = None
         self._rest_version: str = DEFAULT_REST_VERSION
         self._installer_version: str = DEFAULT_INSTALLER_VERSION
+        self.user_code: str = ""
 
     async def close_session(self) -> None:
         """Close the session."""
@@ -91,7 +92,7 @@ class API:
                              request_type: RequestType = RequestType.GET,
                              with_user: bool = True, with_session: bool = True
     ) -> JsonData:
-        headers: dict[str, Any] = {
+        headers: dict[str, str] = {
             "Host": self._hostname,
             "Connection": "keep-alive",
             "User-Agent": USER_AGENT,
@@ -142,7 +143,7 @@ class API:
                         raise InvalidUserCodeError("Wrong user code.")
                     case _:
                         error_data_again: JsonData = self._decode_json(body_bytes) if body_bytes else {}
-                        if isinstance(error_data, dict):
+                        if isinstance(error_data_again, dict):
                             _LOGGER.error("Unhandled HTTP Error %s: %s", resp.status, error_data_again)
                         resp.raise_for_status()
 
@@ -281,7 +282,10 @@ class API:
 
         res: JsonData = await self._send_request("auth", data=data, request_type=RequestType.POST, with_user=False, with_session=False)
         if res and isinstance(res, dict) and "user_token" in res:
-            self._user_token = res["user_token"]
+            token = res["user_token"]
+            if not isinstance(token, str):
+                raise ValueError("Expected a string user token")
+            self._user_token = token
             return True
         return False
 
@@ -298,7 +302,10 @@ class API:
         # User-Token is required for this call
         res: JsonData = await self._send_request("panel/login", data=data, request_type=RequestType.POST, with_user=True, with_session=False)
         if res and isinstance(res, dict) and "session_token" in res:
-            self._session_token = res["session_token"]
+            token = res["session_token"]
+            if not isinstance(token, str):
+                raise ValueError("Expected a string session token")
+            self._session_token = token
             return True
         return False
 
@@ -466,7 +473,11 @@ class API:
     async def get_panels(self) -> list[dict[str, Any]]:
         """Get a list of panels."""
         dt: JsonData = await self._send_request(VisonicURL.PANELS, with_session = False)
-        return dt if isinstance(dt, list) else []
+        if isinstance(dt, list):
+            if any(not isinstance(panel, dict) for panel in dt):
+                raise ValueError("Expected a list of panels")
+            return [panel for panel in dt if isinstance(panel, dict)]
+        return []
 
     async def get_preview_image(self, image_path: str)-> JsonData | None:
         """Get preview image for camera."""
