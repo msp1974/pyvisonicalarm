@@ -3,13 +3,13 @@
 from typing import assert_type
 
 import aiohttp
-
-from pyvisonicalarm.alarm import AlarmSystem
+from pyvisonicalarm.alarm import AlarmSystem, PanelState
 from pyvisonicalarm.classes import (
     FeatureSet,
     Location,
     PanelInfo,
     Partition,
+    Status,
     title_case,
 )
 from pyvisonicalarm.core import API
@@ -43,3 +43,13 @@ async def check_consumer(session: aiohttp.ClientSession) -> None:
     assert_type(await alarm.arm_away(), str | None)
     assert_type(await alarm.connected, bool | None)
     assert_type(await alarm.get_rest_versions(), list[str])
+
+
+async def check_panel_state(alarm: AlarmSystem) -> None:
+    state = await alarm.get_panel_state()
+    assert_type(state, PanelState)
+    assert_type(state.status, Status | None)
+    assert_type(state.connected, bool)
+    assert_type(state.partitions, tuple[Partition, ...])
+    assert_type(state.devices, tuple[Device, ...])
+    assert_type(state.alarm_active, bool)
