@@ -1,5 +1,7 @@
 """Control and access to alrm info."""
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from .classes import (
@@ -10,6 +12,7 @@ from .classes import (
     Location,
     Panel,
     PanelInfo,
+    Partition,
     Process,
     Status,
     Trouble,
@@ -20,6 +23,17 @@ from .const import JsonData
 from .core import API
 from .device_definitions import DEVICE_SUBTYPES, DEVICE_TYPES
 from .devices import Device, GenericDevice
+
+
+@dataclass(frozen=True, slots=True)
+class PanelState:
+    """Current panel data with inferred alarm activity."""
+
+    status: Status | None
+    connected: bool
+    partitions: tuple[Partition, ...] = ()
+    devices: tuple[Device, ...] = ()
+    alarm_active: bool = False
 
 
 class AlarmSystem:
@@ -98,6 +112,54 @@ class AlarmSystem:
         """Send Disarm command to the alarm system."""
         cmd = await self.__api.disarm(partition, user_code)
         return self._get_token(cmd, "process_token")
+
+    async def get_panel_state(self) -> PanelState:
+        """Fetch panel data and determine current alarm activity."""
+        status = await self.get_status()
+        connected = status is not None and bool(status.connected)
+        if not connected or status is None:
+            return PanelState(status=status, connected=connected)
+
+        panel_info = await self.get_panel_info()
+        devices = await self.get_devices()
+        alarms = await self.get_alarms()
+        partitions, alarm_active = self._summarize_alarms(status, panel_info, alarms)
+        return PanelState(
+            status=status,
+            connected=connected,
+            partitions=partitions,
+            devices=tuple(devices),
+            alarm_active=alarm_active,
+        )
+
+    @staticmethod
+    def _summarize_alarms(
+        status: Status, panel_info: PanelInfo | None, alarms: Sequence[Alarm]
+    ) -> tuple[tuple[Partition, ...], bool]:
+        """Select applicable partitions and infer alarm activity."""
+        partitions = tuple(status.partitions)
+        multi_partitions = panel_info is not None and bool(panel_info.multi_partitions)
+        if panel_info is not None:
+            if multi_partitions:
+                active_ids = {part.id for part in panel_info.partitions if part.active}
+                partitions = tuple(part for part in partitions if part.id in active_ids)
+            else:
+                partitions = partitions[:1]
+
+        for partition in partitions:
+            for alarm in alarms:
+                if multi_partitions and partition.id not in (alarm.partitions or []):
+                    continue
+                if alarm.alarm_type in {"FIRE", "PANIC", "EMERGENCY"}:
+                    return partitions, True
+                if (
+                    alarm.alarm_type == "ALARM_IN_MEMORY"
+                    and partition.status == ""
+                    and partition.state in {"AWAY", "HOME"}
+                ):
+                    return partitions, True
+
+        return partitions, False
 
     async def get_alarms(self) -> list[Alarm]:
         """Return alarms."""
