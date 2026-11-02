@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
+
 from pyvisonicalarm.alarm import AlarmSystem, PanelState
 from pyvisonicalarm.classes import Alarm, PanelInfo, Status
 from pyvisonicalarm.core import API
@@ -290,3 +291,79 @@ async def test_panel_state_fetches_data_in_order() -> None:
     assert len(state.devices) == 1
     assert isinstance(state.devices[0], PanelDevice)
     assert state.alarm_active
+
+
+@pytest.mark.parametrize(
+    ("alarm", "expected"),
+    [
+        pytest.param(
+            Alarm({"alarm_type": "FIRE", "partitions": [3]}),
+            {1: False, 3: True},
+            id="fire-only-partition-three",
+        ),
+        pytest.param(
+            Alarm({"alarm_type": "ALARM_IN_MEMORY", "partitions": [1]}),
+            {1: True, 3: False},
+            id="armed-memory-partition-one",
+        ),
+        pytest.param(
+            Alarm({"alarm_type": "ALARM_IN_MEMORY", "partitions": [3]}),
+            {1: False, 3: False},
+            id="disarmed-memory-is-clear",
+        ),
+        pytest.param(
+            Alarm({"alarm_type": "PANIC", "partitions": [2]}),
+            {1: False, 3: False},
+            id="inactive-partition-alarm",
+        ),
+    ],
+)
+async def test_partition_alarm_summary(alarm: Alarm, expected: dict[int, bool]) -> None:
+    """Report each active partition's alarm independently of the whole panel."""
+    status = Status(
+        {
+            "connected": True,
+            "partitions": [
+                {"id": 1, "state": "AWAY", "status": ""},
+                {"id": 3, "state": "DISARM", "status": ""},
+            ],
+        }
+    )
+    info = PanelInfo(
+        {
+            "partitions": [
+                {"id": 1, "active": True},
+                {"id": 2, "active": False},
+                {"id": 3, "active": True},
+            ]
+        }
+    )
+    summary = await fetch_panel_state(status, info, [alarm])
+    assert summary.partitioning_enabled is True
+    assert summary.partition_alarms == expected
+    assert summary.alarm_active is any(expected.values())
+
+
+@pytest.mark.parametrize(
+    ("info", "expected"),
+    [
+        pytest.param(None, None, id="unknown"),
+        pytest.param(PanelInfo({"partitions": [{"id": 1}]}), False, id="unpartitioned"),
+        pytest.param(
+            PanelInfo(
+                {"partitions": [{"id": 1, "active": False}, {"id": 3, "active": True}]}
+            ),
+            True,
+            id="one-active-partition",
+        ),
+    ],
+)
+async def test_partitioning_configuration(
+    info: PanelInfo | None, expected: bool | None
+) -> None:
+    """Distinguish an unpartitioned panel from one with a single active partition."""
+    summary = await fetch_panel_state(
+        Status({"connected": True, "partitions": []}), info, []
+    )
+    assert summary.partitioning_enabled is expected
+    assert summary.partition_alarms == {}

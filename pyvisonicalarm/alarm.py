@@ -1,7 +1,7 @@
 """Control and access to alrm info."""
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .classes import (
@@ -23,6 +23,7 @@ from .const import JsonData
 from .core import API
 from .device_definitions import DEVICE_SUBTYPES, DEVICE_TYPES
 from .devices import Device, GenericDevice
+from .sensor_tracker import SensorStateTracker
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,15 +35,20 @@ class PanelState:
     partitions: tuple[Partition, ...] = ()
     devices: tuple[Device, ...] = ()
     alarm_active: bool = False
+    partitioning_enabled: bool | None = None
+    partition_alarms: dict[int, bool] = field(default_factory=dict)
 
 
 class AlarmSystem:
     """Class definition of the main alarm system."""
 
-    def __init__(self, new_api: API) -> None:
+    def __init__(
+        self, new_api: API, *, sensor_tracker: SensorStateTracker | None = None
+    ) -> None:
         """Alarm system initialisation."""
         self.__api = new_api
         self.user_code: str = ""
+        self.sensor_tracker = sensor_tracker if sensor_tracker is not None else SensorStateTracker()
 
     @staticmethod
     def _get_token(data: JsonData, key: str) -> str | None:
@@ -118,6 +124,7 @@ class AlarmSystem:
         status = await self.get_status()
         connected = status is not None and bool(status.connected)
         if not connected or status is None:
+            self.sensor_tracker.reset_baselines()
             return PanelState(status=status, connected=connected)
 
         panel_info = await self.get_panel_info()
@@ -130,6 +137,16 @@ class AlarmSystem:
             partitions=partitions,
             devices=tuple(devices),
             alarm_active=alarm_active,
+            partitioning_enabled=panel_info.multi_partitions if panel_info else None,
+            partition_alarms={
+                part.id: AlarmSystem._partition_alarm_active(
+                    part,
+                    alarms,
+                    panel_info is not None and bool(panel_info.multi_partitions),
+                )
+                for part in partitions
+                if part.id is not None
+            },
         )
 
     @staticmethod
@@ -146,20 +163,28 @@ class AlarmSystem:
             else:
                 partitions = partitions[:1]
 
-        for partition in partitions:
-            for alarm in alarms:
-                if multi_partitions and partition.id not in (alarm.partitions or []):
-                    continue
-                if alarm.alarm_type in {"FIRE", "PANIC", "EMERGENCY"}:
-                    return partitions, True
-                if (
-                    alarm.alarm_type == "ALARM_IN_MEMORY"
-                    and partition.status == ""
-                    and partition.state in {"AWAY", "HOME"}
-                ):
-                    return partitions, True
+        return partitions, any(
+            AlarmSystem._partition_alarm_active(part, alarms, multi_partitions)
+            for part in partitions
+        )
 
-        return partitions, False
+    @staticmethod
+    def _partition_alarm_active(
+        partition: Partition, alarms: Sequence[Alarm], multi_partitions: bool
+    ) -> bool:
+        """Determine current alarm activity for one selected partition."""
+        for alarm in alarms:
+            if multi_partitions and partition.id not in (alarm.partitions or []):
+                continue
+            if alarm.alarm_type in {"FIRE", "PANIC", "EMERGENCY"}:
+                return True
+            if (
+                alarm.alarm_type == "ALARM_IN_MEMORY"
+                and partition.status == ""
+                and partition.state in {"AWAY", "HOME"}
+            ):
+                return True
+        return False
 
     async def get_alarms(self) -> list[Alarm]:
         """Return alarms."""
@@ -234,6 +259,7 @@ class AlarmSystem:
                 device_list.append(device_class.device(device))
             else:
                 device_list.append(GenericDevice(device))
+        self.sensor_tracker.update(device_list)
         return device_list
 
     async def get_events(self, timestamp_hour_offset: int = 2) -> list[Event]:

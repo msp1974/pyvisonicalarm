@@ -1,11 +1,12 @@
 """DeviceStrState type classes."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, ClassVar, override
 
 from .classes import BaseClass, title_case
 from .const import TEXT_OPENED, TEXT_UNKNOWN, SensorGroup
+from .sensor_types import SensorCapability, parse_boolean, parse_number, parse_zone_state
 
 
 @dataclass
@@ -124,6 +125,86 @@ class DeviceStrState(Device):
         return self._get_key_str("state", TEXT_UNKNOWN)
 
 @dataclass
+class SensorDevice(DeviceStrState):
+    """A zone sensor with normalized readings and reporting capabilities."""
+
+    triggered: int = field(default=0, init=False)
+    _model: ClassVar[str] = "Unknown"
+    _sensor_type: ClassVar[SensorGroup] = SensorGroup.UNKNOWN
+    _capabilities: ClassVar[frozenset[SensorCapability]] = frozenset({
+        SensorCapability.TAMPER, SensorCapability.PROBLEM,
+    })
+
+    @property
+    def model(self) -> str:
+        """Return the model category identified by the cloud device class."""
+        return self._model
+
+    @property
+    def sensor_type(self) -> SensorGroup:
+        """Return the sensor's physical category."""
+        return self._sensor_type
+
+    @property
+    def capabilities(self) -> frozenset[SensorCapability]:
+        """Return reporting supported by this sensor."""
+        return self._capabilities
+
+    @property
+    def enrolled(self) -> bool:
+        """Require completed enrollment and a nonempty enrollment identifier."""
+        identifier = self._data.get("enrollment_id")
+        return (
+            parse_boolean(self._data.get("preenroll", False)) is False
+            and isinstance(identifier, str)
+            and identifier.strip().lower() not in ("", "0", "none", "unknown")
+        )
+
+    @property
+    def is_open(self) -> bool | None:
+        """Return the current zone state, or None when unknown."""
+        return parse_zone_state(self._data.get("state"))
+
+    @property
+    def low_battery_active(self) -> bool | None:
+        """Return the normalized low-battery flag."""
+        return parse_boolean(self._data.get("low_battery"))
+
+    @property
+    def tamper_active(self) -> bool | None:
+        """Return the normalized tamper flag."""
+        return parse_boolean(self._data.get("tamper"))
+
+    @property
+    def bypassed(self) -> bool | None:
+        """Return the normalized bypass flag."""
+        return parse_boolean(self._get_nested_key("traits.bypass.enabled"))
+
+    @property
+    def trouble_status(self) -> str | None:
+        """Distinguish explicitly clear trouble from unavailable trouble data."""
+        if "trouble" not in self._data:
+            return None
+        value = self._data["trouble"]
+        if value is None:
+            return "none"
+        if isinstance(value, str):
+            token = value.strip().lower()
+            return token if token not in ("", "unknown") else None
+        return None
+
+    @property
+    def temperature(self) -> float | None:
+        """Return temperature when reported by this sensor."""
+        return None
+
+    @property
+    def lux(self) -> float | None:
+        """Return illuminance when reported by this sensor."""
+        return None
+
+
+@dataclass
 class SirenDevice(DeviceStrState):
     """Siren device class definition."""
 
@@ -153,8 +234,12 @@ class PanelDevice(DeviceStrState):
 
 
 @dataclass
-class CameraDevice(DeviceStrState):
+class CameraDevice(SensorDevice):
     """Camera device class definition."""
+
+    _model = "Camera"
+    _sensor_type = SensorGroup.CAMERA
+    _capabilities = SensorDevice._capabilities | {SensorCapability.BATTERY, SensorCapability.TRIGGER}
 
     @property
     def vod(self) -> str:
@@ -163,21 +248,75 @@ class CameraDevice(DeviceStrState):
 
 
 @dataclass
-class ContactDevice(DeviceStrState):
+class ContactDevice(SensorDevice):
     """Contact device class definition."""
 
-@dataclass
-class ShockDevice(DeviceStrState):
-    """Contact device class definition."""
+    _model = "Contact"
+    _sensor_type = SensorGroup.MAGNET
+    _capabilities = SensorDevice._capabilities | {SensorCapability.BATTERY, SensorCapability.STATE}
 
-@dataclass
-class MotionDevice(DeviceStrState):
-    """Motion sensor device class definition."""
 
     @property
-    def brightness(self) -> int:
+    @override
+    def model(self) -> str:
+        """Identify a wired contact without claiming battery support."""
+        return "Wired" if self.subtype == "HW_ZONE_CONNECTED_DIRECTLY_TO_THE_PANEL" else self._model
+
+    @property
+    @override
+    def sensor_type(self) -> SensorGroup:
+        """Return the wired or wireless contact category."""
+        return SensorGroup.WIRED if self.subtype == "HW_ZONE_CONNECTED_DIRECTLY_TO_THE_PANEL" else self._sensor_type
+
+    @property
+    @override
+    def capabilities(self) -> frozenset[SensorCapability]:
+        """Exclude battery reporting for contacts wired directly to the panel."""
+        if self.subtype == "HW_ZONE_CONNECTED_DIRECTLY_TO_THE_PANEL":
+            return self._capabilities - {SensorCapability.BATTERY}
+        return self._capabilities
+
+
+@dataclass
+class ShockDevice(SensorDevice):
+    """Contact device class definition."""
+
+    _model = "Shock"
+    _sensor_type = SensorGroup.SHOCK
+    _capabilities = SensorDevice._capabilities | {SensorCapability.BATTERY, SensorCapability.TRIGGER, SensorCapability.STATE}
+
+@dataclass
+class MotionDevice(SensorDevice):
+    """Motion sensor device class definition."""
+
+    _model = "Motion"
+    _sensor_type = SensorGroup.MOTION
+    _capabilities = SensorDevice._capabilities | {SensorCapability.BATTERY, SensorCapability.TRIGGER}
+
+
+    @property
+    @override
+    def capabilities(self) -> frozenset[SensorCapability]:
+        """Include numeric reports advertised by meteo traits, even without a value."""
+        capabilities = self._capabilities
+        traits = self._get_nested_key("traits.meteo_info")
+        if isinstance(traits, dict):
+            if "temperature" in traits:
+                capabilities = capabilities | {SensorCapability.TEMPERATURE}
+            if "brightness" in traits:
+                capabilities = capabilities | {SensorCapability.ILLUMINANCE}
+        return capabilities
+
+    @property
+    @override
+    def lux(self) -> float | None:
+        """Return the reported brightness without substituting zero for absence."""
+        return self.brightness
+
+    @property
+    def brightness(self) -> float | None:
         """Get brightness level."""
-        return self._get_nested_key_int("traits.meteo_info.brightness.value", 0)
+        return parse_number(self._get_nested_key("traits.meteo_info.brightness.value"))
 
     @property
     def brightness_last_updated(self) -> datetime | None:
@@ -188,12 +327,10 @@ class MotionDevice(DeviceStrState):
         return None
 
     @property
+    @override
     def temperature(self) -> float | None:
         """Get temperature."""
-        val = self._get_nested_key("traits.meteo_info.temperature.value", None)
-        if val is None or isinstance(val, float):
-            return val
-        return None
+        return parse_number(self._get_nested_key("traits.meteo_info.temperature.value"))
 
     @property
     def temperature_last_updated(self) -> datetime | None:
@@ -262,5 +399,9 @@ class PGMDevice(DeviceStrState):
 
 
 @dataclass
-class SmokeDevice(DeviceStrState):
+class SmokeDevice(SensorDevice):
     """Smoke device class definition."""
+
+    _model = "Smoke"
+    _sensor_type = SensorGroup.SMOKE
+    _capabilities = SensorDevice._capabilities | {SensorCapability.BATTERY, SensorCapability.TRIGGER}

@@ -584,6 +584,24 @@ class Status(BaseClass):
         return self._get_optional("connected", bool)
 
     @property
+    def connection_diagnostics(self) -> dict[str, bool | str | None]:
+        """Return allowlisted link indicators without identifiers or raw payloads."""
+        result: dict[str, bool | str | None] = {"panel_connected": self.connected}
+        for name, transport in (("broadband", "bba"), ("cellular", "gprs")):
+            value = self._get_nested_key(f"connected_status.{transport}.is_connected")
+            result[f"{name}_connected"] = value if isinstance(value, bool) else None
+            state = self._get_nested_key(f"connected_status.{transport}.state")
+            if isinstance(state, str):
+                token = state.lower()
+                result[f"{name}_state"] = token if token in {
+                    "online", "offline", "connected", "disconnected", "unknown",
+                    "connecting", "initializing", "disabled", "not_connected",
+                } else "unrecognized"
+            else:
+                result[f"{name}_state"] = None
+        return result
+
+    @property
     def bba_connected(self) -> bool:
         """Get if broadband connected."""
         val: bool = self._get_nested_key("connected_status.bba.is_connected", False)

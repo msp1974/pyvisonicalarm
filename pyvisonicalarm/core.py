@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from time import monotonic
 from typing import Any
 
 import aiohttp
@@ -92,6 +93,11 @@ class API:
                              request_type: RequestType = RequestType.GET,
                              with_user: bool = True, with_session: bool = True
     ) -> JsonData:
+        endpoint = url.rsplit("/", 1)[-1].split("?", 1)[0]
+        if endpoint not in {"status", "panel_info", "devices", "alarms", "login", "logout", "authenticate", "version"}:
+            endpoint = "other"
+        started = monotonic()
+        response_status: int | None = None
         headers: dict[str, str] = {
             "Host": self._hostname,
             "Connection": "keep-alive",
@@ -112,7 +118,12 @@ class API:
             async with self._session.request(method=request_type, url=url, headers=headers, params=params, json=data, timeout=ClientTimeout(total=self._timeout)) as resp:
 
                 # Await the response body immediately so we can parse it in catch blocks
+                response_status = resp.status
                 body_bytes = await resp.read()
+                _LOGGER.debug(
+                    "Cloud HTTP response endpoint=%s method=%s status=%s elapsed=%.3fs",
+                    endpoint, request_type, response_status, monotonic() - started,
+                )
                 match resp.status:
                     case 200:
                         return self._decode_json(body_bytes)
@@ -144,14 +155,32 @@ class API:
                     case _:
                         error_data_again: JsonData = self._decode_json(body_bytes) if body_bytes else {}
                         if isinstance(error_data_again, dict):
-                            _LOGGER.error("Unhandled HTTP Error %s: %s", resp.status, error_data_again)
+                            _LOGGER.error("Unhandled cloud HTTP status=%s endpoint=%s", resp.status, endpoint)
                         resp.raise_for_status()
 
         except asyncio.TimeoutError as exc:  # noqa: UP041
+            _LOGGER.debug(
+                "Cloud HTTP timeout endpoint=%s phase=%s status=%s elapsed=%.3fs type=%s",
+                endpoint, "response_body" if response_status is not None else "connection_or_headers",
+                response_status, monotonic() - started, type(exc).__name__,
+            )
             raise ConnectionTimeoutError(
                 f"Connection to '{self._hostname}' timed out after {self._timeout} seconds."
             ) from exc
         except aiohttp.ClientError as exc:
+            if isinstance(exc, aiohttp.ClientResponseError):
+                category = "http_response"
+                response_status = exc.status
+            elif isinstance(exc, aiohttp.ClientConnectorDNSError):
+                category = "dns"
+            elif isinstance(exc, aiohttp.ClientSSLError):
+                category = "tls"
+            else:
+                category = "connection_or_response_read"
+            _LOGGER.debug(
+                "Cloud HTTP failure endpoint=%s category=%s status=%s elapsed=%.3fs type=%s",
+                endpoint, category, response_status, monotonic() - started, type(exc).__name__,
+            )
             # Catch-all for aiohttp connection issues
             raise ConnectionTimeoutError(f"Network error: {exc!s}") from exc
 
@@ -319,7 +348,7 @@ class API:
             await self._send_request("panel/logout", request_type=RequestType.POST)
             self._session_token = None
         except (UnauthorizedError, SessionTokenError, ConnectionTimeoutError, aiohttp.ClientError) as exc:
-            _LOGGER.debug("Logout failed: %s", exc)
+            _LOGGER.debug("Logout failed (%s)", type(exc).__name__)
             return False
         return True
 
@@ -394,7 +423,7 @@ class API:
         except (ConnectionTimeoutError, aiohttp.ClientError) as err:
             # For other errors (like timeouts), you might want to log it
             # but usually, we only return False if the AUTH specifically failed
-            _LOGGER.debug("is_logged_in check failed due to connection: %s", err)
+            _LOGGER.debug("is_logged_in connection check failed (%s)", type(err).__name__)
             return False
         return True
 
