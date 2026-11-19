@@ -72,34 +72,75 @@ async def test_partition_selection(
 
 
 @pytest.mark.parametrize(
-    ("state", "status_value", "expected"),
+    ("state", "status_value"),
     [
-        pytest.param("AWAY", "", True, id="armed-away"),
-        pytest.param("HOME", "", True, id="armed-home"),
-        pytest.param("DISARM", "", False, id="disarmed"),
-        pytest.param("AWAY", "EXIT", False, id="arming-away"),
-        pytest.param("HOME", "EXIT", False, id="arming-home"),
-        pytest.param("ENTRY_DELAY", "", False, id="entry-delay"),
-        pytest.param("PROGRAMMING", "", False, id="programming"),
-        pytest.param("ALARM", "", False, id="alarm-state"),
-        pytest.param("UNKNOWN", "", False, id="unknown-state"),
-        pytest.param(None, "", False, id="missing-state"),
-        pytest.param("AWAY", None, False, id="missing-status"),
-        pytest.param("AWAY", "UNKNOWN", False, id="unknown-status"),
+        pytest.param("AWAY", "", id="armed-away"),
+        pytest.param("HOME", "", id="armed-home"),
+        pytest.param("DISARM", "", id="disarmed"),
+        pytest.param("AWAY", "EXIT", id="arming-away"),
+        pytest.param("HOME", "EXIT", id="arming-home"),
+        pytest.param("ENTRY_DELAY", "", id="entry-delay"),
+        pytest.param("PROGRAMMING", "", id="programming"),
+        pytest.param("ALARM", "", id="alarm-state"),
+        pytest.param("UNKNOWN", "", id="unknown-state"),
+        pytest.param(None, "", id="missing-state"),
+        pytest.param("AWAY", None, id="missing-status"),
+        pytest.param("AWAY", "UNKNOWN", id="unknown-status"),
+    ],
+)
+@pytest.mark.parametrize(
+    "alarm_date",
+    [
+        pytest.param("2026-10-19 06:48:53", id="old-memory"),
+        pytest.param("2026-11-19 12:00:00", id="recent-memory"),
+        pytest.param(None, id="undated-memory"),
     ],
 )
 async def test_alarm_memory(
-    state: str | None, status_value: str | None, expected: bool
+    state: str | None, status_value: str | None, alarm_date: str | None
 ) -> None:
+    """Alarm memory must not override the current partition state."""
     status = Status(
         {"connected": True, "partitions": [{"state": state, "status": status_value}]}
     )
 
     summary = await fetch_panel_state(
-        status, None, [Alarm({"alarm_type": "ALARM_IN_MEMORY"})]
+        status,
+        None,
+        [Alarm({"alarm_type": "ALARM_IN_MEMORY", "datetime": alarm_date})],
     )
 
-    assert summary.alarm_active is expected
+    assert not summary.alarm_active
+    assert summary.partitions[0].state == state
+    assert summary.partitions[0].status == status_value
+
+
+@pytest.mark.parametrize("state", ["AWAY", "HOME"])
+async def test_alarm_memory_after_reconnect(state: str) -> None:
+    """A recovered connection must not turn retained memory into an active alarm."""
+    api = AsyncMock(spec=API)
+    api.get_status.side_effect = [
+        {"connected": False},
+        {
+            "connected": True,
+            "partitions": [{"id": 1, "state": state, "status": ""}],
+        },
+    ]
+    api.get_panel_info.return_value = {"partitions": [{"id": 1}]}
+    api.get_devices.return_value = []
+    api.get_alarms.return_value = [
+        {"alarm_type": "ALARM_IN_MEMORY", "datetime": "2026-10-19 06:48:53"}
+    ]
+    system = AlarmSystem(api)
+
+    disconnected = await system.get_panel_state()
+    recovered = await system.get_panel_state()
+
+    assert not disconnected.connected
+    assert recovered.connected
+    assert not recovered.alarm_active
+    assert recovered.partition_alarms == {1: False}
+    assert recovered.partitions[0].state == state
 
 
 @pytest.mark.parametrize(
@@ -303,7 +344,7 @@ async def test_panel_state_fetches_data_in_order() -> None:
         ),
         pytest.param(
             Alarm({"alarm_type": "ALARM_IN_MEMORY", "partitions": [1]}),
-            {1: True, 3: False},
+            {1: False, 3: False},
             id="armed-memory-partition-one",
         ),
         pytest.param(

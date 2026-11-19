@@ -178,12 +178,6 @@ class AlarmSystem:
                 continue
             if alarm.alarm_type in {"FIRE", "PANIC", "EMERGENCY"}:
                 return True
-            if (
-                alarm.alarm_type == "ALARM_IN_MEMORY"
-                and partition.status == ""
-                and partition.state in {"AWAY", "HOME"}
-            ):
-                return True
         return False
 
     async def get_alarms(self) -> list[Alarm]:
