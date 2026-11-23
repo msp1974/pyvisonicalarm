@@ -21,7 +21,7 @@ from .classes import (
 )
 from .const import JsonData
 from .core import API
-from .device_definitions import DEVICE_SUBTYPES, DEVICE_TYPES
+from .device_definitions import get_device_definition
 from .devices import Device, GenericDevice
 from .sensor_tracker import SensorStateTracker
 
@@ -248,7 +248,9 @@ class AlarmSystem:
             device["trouble"] = trouble
             device["tamper"] = tamper
             device["state"] = state
-            if (device_class := DEVICE_SUBTYPES.get(device["subtype"])) or (device_class := DEVICE_TYPES.get(device["device_type"])):
+            if device_class := get_device_definition(
+                device["device_type"], device["subtype"]
+            ):
                 device["sensor_group"] = device_class.sensor_group
                 device_list.append(device_class.device(device))
             else:

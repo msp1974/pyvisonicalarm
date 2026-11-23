@@ -16,10 +16,11 @@ from pyvisonicalarm.devices import (
     SmokeDevice,
 )
 from pyvisonicalarm.sensor_tracker import SensorStateTracker
+from pyvisonicalarm.sensor_types import SensorCapability
 
 
 def make_sensor(
-    state: object, sensor_type: type[SensorDevice] = MotionDevice, device_id: int = 1
+    state: object, sensor_type: type[SensorDevice] = ShockDevice, device_id: int = 1
 ) -> SensorDevice:
     return sensor_type(
         {"id": device_id, "enrollment_id": "enrolled-sensor", "state": state}
@@ -29,8 +30,6 @@ def make_sensor(
 @pytest.mark.parametrize(
     "sensor_type",
     [
-        pytest.param(MotionDevice, id="motion"),
-        pytest.param(CameraDevice, id="camera"),
         pytest.param(ShockDevice, id="shock"),
         pytest.param(SmokeDevice, id="smoke"),
     ],
@@ -81,7 +80,7 @@ def test_trigger_counter_observations(
 def test_unenrolled_sensors_do_not_count(changes: dict[str, object]) -> None:
     tracker = SensorStateTracker()
     sensors = [
-        MotionDevice(
+        ShockDevice(
             {"id": 1, "enrollment_id": "enrolled-sensor", "state": state, **changes}
         )
         for state in (False, True)
@@ -94,6 +93,8 @@ def test_unenrolled_sensors_do_not_count(changes: dict[str, object]) -> None:
 @pytest.mark.parametrize(
     "sensor_type",
     [
+        pytest.param(MotionDevice, id="motion"),
+        pytest.param(CameraDevice, id="camera"),
         pytest.param(ContactDevice, id="contact"),
         pytest.param(SensorDevice, id="unknown-sensor"),
     ],
@@ -106,6 +107,18 @@ def test_sensors_without_trigger_capability_do_not_count(
     for sensor in sensors:
         tracker.update([sensor])
     assert [sensor.triggered for sensor in sensors] == [0, 0, 0, 0]
+
+
+@pytest.mark.parametrize(
+    "sensor_type",
+    [pytest.param(MotionDevice, id="motion"), pytest.param(CameraDevice, id="camera")],
+)
+def test_motion_and_camera_do_not_advertise_trigger_capability(
+    sensor_type: type[SensorDevice],
+) -> None:
+    """Cloud PIR and camera devices expose no live motion-trigger capability."""
+    sensor = make_sensor(False, sensor_type)
+    assert SensorCapability.TRIGGER not in sensor.capabilities
 
 
 @pytest.mark.parametrize(
@@ -218,7 +231,7 @@ async def test_alarm_system_updates_tracker_across_replaced_sessions() -> None:
     assert isinstance(initial[0], MotionDevice)
     assert isinstance(active[0], MotionDevice)
     assert isinstance(held[0], MotionDevice)
-    assert [initial[0].triggered, active[0].triggered, held[0].triggered] == [0, 1, 1]
+    assert [initial[0].triggered, active[0].triggered, held[0].triggered] == [0, 0, 0]
 
 
 @pytest.mark.asyncio

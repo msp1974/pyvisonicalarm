@@ -44,6 +44,11 @@ class Device(BaseClass):
         return self._get_key_int("id")
 
     @property
+    def device_uid(self) -> str:
+        """Return a stable identity unique across cloud device types."""
+        return f"{self.device_type.casefold()}_{self.id}"
+
+    @property
     @title_case
     def location(self) -> str:
         """Get device location."""
@@ -239,7 +244,7 @@ class CameraDevice(SensorDevice):
 
     _model = "Camera"
     _sensor_type = SensorGroup.CAMERA
-    _capabilities = SensorDevice._capabilities | {SensorCapability.BATTERY, SensorCapability.TRIGGER}
+    _capabilities = SensorDevice._capabilities | {SensorCapability.BATTERY}
 
     @property
     def vod(self) -> str:
@@ -291,7 +296,7 @@ class MotionDevice(SensorDevice):
 
     _model = "Motion"
     _sensor_type = SensorGroup.MOTION
-    _capabilities = SensorDevice._capabilities | {SensorCapability.BATTERY, SensorCapability.TRIGGER}
+    _capabilities = SensorDevice._capabilities | {SensorCapability.BATTERY}
 
 
     @property
@@ -405,3 +410,22 @@ class SmokeDevice(SensorDevice):
     _model = "Smoke"
     _sensor_type = SensorGroup.SMOKE
     _capabilities = SensorDevice._capabilities | {SensorCapability.BATTERY, SensorCapability.TRIGGER}
+
+
+@dataclass
+class FloodDevice(SensorDevice):
+    """Flood sensor device class definition."""
+
+    _model = "Flood"
+    _sensor_type = SensorGroup.FLOOD
+    _capabilities = SensorDevice._capabilities | {SensorCapability.BATTERY, SensorCapability.STATE}
+
+
+@dataclass
+class RepeaterDevice(DeviceStrState):
+    """Wireless repeater device class definition."""
+
+
+@dataclass
+class KeypadDevice(DeviceStrState):
+    """Wireless keypad device class definition."""
